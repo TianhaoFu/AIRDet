@@ -69,7 +69,7 @@ def trt_export(onnx_path, batch_size, inference_h, inference_w, mode):
 
     TRT_LOGGER = trt.Logger()
     trt_mode = mode.split('_')[-1]
-    engine_path = onnx_path.replace('.onnx', f'_{trt_mode}.trt')
+    engine_path = onnx_path.replace('.onnx', '.trt')
 
     EXPLICIT_BATCH = 1 << (int)(trt.NetworkDefinitionCreationFlag.EXPLICIT_BATCH)
 

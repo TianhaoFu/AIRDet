@@ -17,12 +17,12 @@ from ..losses.gfocal_loss import GIoULoss, DistributionFocalLoss, QualityFocalLo
 from airdet.utils import postprocess_gfocal as postprocess
 
 class ESEAttn(nn.Module):
-    def __init__(self, feat_channels):
+    def __init__(self, feat_channels, act):
         super(ESEAttn, self).__init__()
         self.fc = nn.Conv2d(feat_channels, feat_channels, 1)
         self.sig = nn.Sigmoid()
       #  self.conv = ConvBNLayer(feat_channels, feat_channels, 1, act=act)
-        self.conv = BaseConv(feat_channels, feat_channels, 1)
+        self.conv = BaseConv(feat_channels, feat_channels, 1, act=act)
 
         self._init_weights()
 
@@ -214,8 +214,8 @@ class GFocalHead_Tiny(nn.Module):
             self.reg_convs.append(reg_convs)
             self.reg_confs.append(reg_conf)
 
-            self.reg_ese.append(ESEAttn(self.in_channels[i]))
-            self.cls_ese.append(ESEAttn(self.in_channels[i]))
+            self.reg_ese.append(ESEAttn(self.in_channels[i], act=self.act))
+            self.cls_ese.append(ESEAttn(self.in_channels[i], act=self.act))
 
         self.gfl_cls = nn.ModuleList(
                             [nn.Conv2d(
