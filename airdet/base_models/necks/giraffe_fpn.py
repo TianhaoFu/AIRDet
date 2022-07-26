@@ -16,6 +16,7 @@ from timm.models.layers import create_conv2d, create_pool2d, Swish, get_act_laye
 from airdet.base_models.necks.giraffe_config import get_graph_config
 from ..core.base_ops import CSPLayer, ShuffleBlock, ShuffleCSPLayer
 from ..core.neck_ops import RepBlock
+from ..core.neck_ops_bak import CSPStage
 
 _ACT_LAYER = Swish
 
@@ -379,12 +380,14 @@ class GiraffeLayer(nn.Module):
 
             out_channels = fpn_channels[fpn_channels_idx]
 
-            if len(fnode_cfg['inputs_offsets']) == 1:
+            if len(fnode_cfg['inputs_offsets']) == -1:
                 after_combine.add_module('identity', nn.Identity())
             else:
                 if merge_type == 'csp':
-                    after_combine.add_module('CspLayer', CSPLayer(in_channels, out_channels, 2, shortcut=True, depthwise=False, act='silu'))
+                    after_combine.add_module('CspLayer', CSPLayer(in_channels, out_channels, 2, shortcut=True, depthwise=False, act='relu'))
                 elif merge_type == 'reparam_csp':
+                    after_combine.add_module('CSPStage', CSPStage('BasicBlock', in_channels, out_channels, 2, act='relu', spp=False))
+                elif merge_type == 'reparam_conv':
                     after_combine.add_module('conv1x1', create_conv2d(in_channels, out_channels, kernel_size=1))
                     after_combine.add_module('RepBlock', RepBlock(out_channels, out_channels, 1))
                 elif merge_type == 'shuffle':
@@ -415,6 +418,8 @@ class GiraffeLayer(nn.Module):
         self.feature_info = self.out_feature_info
 
     def forward(self, x: List[torch.Tensor]):
+        # import pdb
+        # pdb.set_trace()
         for fn in self.fnode:
             x.append(fn(x))
         return x[-self.num_levels::]

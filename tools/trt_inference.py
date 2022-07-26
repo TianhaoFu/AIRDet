@@ -104,8 +104,8 @@ if __name__ == '__main__':
     model = runtime.deserialize_cuda_engine(t.read())
     context = model.create_execution_context()
 
-    input_batch = img_np.astype(target_dtype)
-    output = np.empty([BATCH_SIZE, 8400, config.model.head.num_classes + 5], dtype = target_dtype)
+    input_batch = np.ones([32, 3, 640, 640], dtype = target_dtype)
+    output = np.empty([32, 8400, config.model.head.num_classes + 5], dtype = target_dtype)
 
     d_input = cuda.mem_alloc(1 * input_batch.nbytes)
     d_output = cuda.mem_alloc(1 * output.nbytes)
@@ -132,9 +132,10 @@ if __name__ == '__main__':
 
     # Model Inference
     t0 = time.time()
-    pred = predict(input_batch)
+    for i in range(500):
+        pred = predict(input_batch)
     t_all = time.time() - t0
-    print("Prediction cost {:.4f}s".format(t_all))
+    print("Prediction cost {:.4f}s".format(t_all/500/32))
 
     decode_output = torch.Tensor(pred)
     prediction = postprocess_gfocal(decode_output, config.model.head.num_classes, \

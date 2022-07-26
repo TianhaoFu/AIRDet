@@ -318,11 +318,11 @@ class GFocalHead_Tiny(nn.Module):
 
         if self.use_ese:
             avg_feat = F.adaptive_avg_pool2d(x, (1,1))
-            reg_feat = reg_ese(x, avg_feat)
-            cls_feat = cls_ese(x, avg_feat)
+            reg_feat = reg_ese(reg_feat, avg_feat)
+            cls_feat = cls_ese(cls_feat, avg_feat)
         for cls_conv in cls_convs:
             cls_feat = cls_conv(cls_feat)
-        cls_feat += x
+        cls_feat = cls_feat + x
 
         for reg_conv in reg_convs:
             reg_feat = reg_conv(reg_feat)

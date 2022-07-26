@@ -13,6 +13,8 @@ from airdet.base_models.core.base_ops import SiLU
 from airdet.utils.model_utils import replace_module
 from airdet.config.base import parse_config
 from airdet.detectors.detector_base import Detector, build_local_model
+from airdet.base_models.core.neck_ops_bak import RepVGGBlock
+from airdet.utils import get_model_info
 
 def make_parser():
     parser = argparse.ArgumentParser("AIRDet converter deployment toolbox")
@@ -111,6 +113,7 @@ def main():
 
     # build model
     model = build_local_model(config, "cuda")
+    print ("Model Summary: {}".format(get_model_info(model, (640, 640))))
 
     # load model paramerters
     ckpt = torch.load(args.ckpt, map_location="cpu")
@@ -118,11 +121,14 @@ def main():
     model = model.cpu()
     if "model" in ckpt:
         ckpt = ckpt["model"]
-    model.load_state_dict(ckpt, strict=False)
-    model.model_switch()
+    # model.load_state_dict(ckpt, strict=False)
+    # model.model_switch()
     logger.info("loading checkpoint done.")
 
     model = replace_module(model, nn.SiLU, SiLU)
+    for layer in model.modules():
+        if isinstance(layer, RepVGGBlock):
+            layer.switch_to_deploy()
     # decouple postprocess
     model.head.decode_in_inference = False
     output_name = f"{args.output_name.replace('.onnx', '')}_fp{args.mode.split('_')[-1]}_bs{args.batch_size}.onnx"

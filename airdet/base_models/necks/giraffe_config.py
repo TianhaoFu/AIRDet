@@ -196,6 +196,8 @@ def giraffeneck_config(min_level, max_level, weight_method=None, depth_multiplie
             }
 
     pnodes = dict(sorted(pnodes.items(), key=lambda x:x[0]))
+    # import pdb
+    # pdb.set_trace()
     return pnodes
 
 

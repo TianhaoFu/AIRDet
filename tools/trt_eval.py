@@ -118,19 +118,19 @@ def main():
 
     val_loader = make_data_loader(config, is_train=False)
 
-    for output_folder, dataset_name, data_loader_val in zip(output_folders, config.dataset.val_ann, val_loader):
-        inference(
-            config,
-            context,
-            data_loader_val,
-            dataset_name,
-            iou_types = ("bbox",),
-            box_only = False,
-            device = device,
-            output_folder = output_folder,
-        )
+    # for output_folder, dataset_name, data_loader_val in zip(output_folders, config.dataset.val_ann, val_loader):
+    #     inference(
+    #         config,
+    #         context,
+    #         data_loader_val,
+    #         dataset_name,
+    #         iou_types = ("bbox",),
+    #         box_only = False,
+    #         device = device,
+    #         output_folder = output_folder,
+    #     )
 
-    trt_speed(trt_path=args.trt, batch_size=args.batch_size, h=args.img_size, w=args.img_size)
+    trt_speed(trt_path=args.trt, batch_size=args.batch_size, h=args.img_size, w=args.img_size, config=config)
 
 if __name__ == "__main__":
     main()
