@@ -2,13 +2,13 @@ import torch
 import torch.nn as nn
 
 class FeatureLoss(nn.Module):
-    def __init__(self, distiller, FPN_Channels, loss_weight=0.1):
+    def __init__(self, distiller, FPN_Channels, tea_FPN_Channels, loss_weight=0.1):
         super(FeatureLoss, self).__init__()
 
         if(distiller == "mimic"):
-            self.feature_loss = MimicLoss(FPN_Channels, loss_weight)
+            self.feature_loss = MimicLoss(FPN_Channels, tea_FPN_Channels, loss_weight)
         elif(distiller == "mgd"):
-            self.feature_loss = MGDLoss(FPN_Channels, loss_weight)
+            self.feature_loss = MGDLoss(FPN_Channels, tea_FPN_Channels, loss_weight)
         else:
             assert False
 
@@ -19,21 +19,21 @@ class FeatureLoss(nn.Module):
 
 
 class MimicLoss(nn.Module):
-    def __init__(self, FPN_Channels, loss_weight=0.1):
+    def __init__(self, FPN_Channels, tea_FPN_Channels, loss_weight=0.1):
         super(MimicLoss, self).__init__()
         device = "cuda" if torch.cuda.is_available() else "cpu"
         self.loss_weight = loss_weight
         self.mse = nn.MSELoss()
 
-        self.align_module = [nn.Conv2d(channel, channel, kernel_size=1, stride=1, padding=0).to(device) for channel in FPN_Channels]
+        self.align_module = [nn.Conv2d(channel, tea_channel, kernel_size=1, stride=1, padding=0).to(device) for channel, tea_channel in zip(FPN_Channels, tea_FPN_Channels)]
 
     def forward(self, y_s, y_t):
         if isinstance(y_s, (tuple, list)):
             assert len(y_s) == len(y_t)
             losses = []
             for idx, (s, t) in enumerate(zip(y_s, y_t)):
-                assert s.shape == t.shape
                 s = self.align_module[idx](s)
+                assert s.shape == t.shape
                 losses.append(self.mse(s, t))
             loss = sum(losses)
         else:

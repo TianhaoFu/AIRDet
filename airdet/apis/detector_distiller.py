@@ -158,6 +158,10 @@ class Distiller:
 
 
     def train(self, local_rank):
+        # build student model
+        self.model = build_local_model(self.config, self.device)
+        self.optimizer = self.build_optimizer()
+
         # build teacher model
         self.tea_model = build_local_model(self.tea_config, self.device)
         self.tea_model.eval()
@@ -167,12 +171,8 @@ class Distiller:
         self.tea_model.load_state_dict(ckpt["model"], strict=True)
         logger.info("Loading teacher model...")
 
-        # build student model
-        self.model = build_local_model(self.config, self.device)
-        self.optimizer = self.build_optimizer()
-
         # build distiller
-        distill = FeatureLoss(self.args.distiller, self.config.model.neck.out_fpn_channels, self.args.loss_weight).to(self.device)
+        distill = FeatureLoss(self.args.distiller, self.config.model.neck.out_fpn_channels, self.tea_config.model.neck.out_fpn_channels, self.args.loss_weight).to(self.device)
 
         # resume model
         if self.config.training.resume_path is not None:
@@ -183,9 +183,6 @@ class Distiller:
         else:
             self.epoch = 0
             self.config.training.start_epoch = self.epoch
-            logger.info(
-                "Start Training..."
-            )
 
         if self.config.training.ema:
             self.ema_model = deepcopy(self.model).eval()
@@ -199,7 +196,7 @@ class Distiller:
 
         # distributed model init
         self.model = build_ddp_model(self.model, local_rank)
-        self.tea_model = build_ddp_model(self.tea_model, local_rank)
+        # self.tea_model = build_ddp_model(self.tea_model, local_rank)
 
         # dataset init
         self.train_loader = make_data_loader(self.config, is_train=True)

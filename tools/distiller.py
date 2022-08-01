@@ -13,6 +13,7 @@ import torch.backends.cudnn as cudnn
 from airdet.apis.detector_distiller import Distiller
 from airdet.config.base import parse_config
 from airdet.utils import get_num_devices, synchronize
+import copy
 
 
 def make_parser():
@@ -61,6 +62,7 @@ def main():
     # student
     stu_config = parse_config(args.stu_config)
     stu_config.merge(args.opts)
+    stu_config = copy.deepcopy(stu_config) # debug
 
     # teacher
     tea_config = parse_config(args.tea_config)

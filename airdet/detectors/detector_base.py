@@ -38,6 +38,7 @@ class Detector(nn.Module):
         self.apply(self.init_bn)
 
         if self.config.training.pretrain_model is None:
+            # self.backbone.init_weights(pretrain = "csp_darknet.pth.tar")
             self.backbone.init_weights()
             self.neck.init_weights()
             self.head.init_weights()
@@ -64,36 +65,32 @@ class Detector(nn.Module):
         feature_outs = self.backbone(images.tensors)  # list of tensor
         fpn_outs = self.neck(feature_outs)
 
-        if distill and tea:
-            return fpn_outs
-
-        if distill and stu:
-            if self.training:
+        if distill:
+            if tea:
+                return fpn_outs
+            elif stu:
                 loss_dict = self.head(
                                 xin=fpn_outs,
                                 labels=targets,
                                 imgs=images,
                                 )
                 return loss_dict, fpn_outs
-            else:
-                outputs = self.head(fpn_outs, imgs=images)
-                return outputs
-
-        if self.training:
-            loss_dict = self.head(
-                            xin=fpn_outs,
-                            labels=targets,
-                            imgs=images,
-                            )
-            return loss_dict
         else:
-            outputs = self.head(
-			fpn_outs, 
-			imgs=images, 
-			conf_thre=self.conf_thre, 
-			nms_thre=self.nms_thre
-			)
-            return outputs
+            if self.training:
+                loss_dict = self.head(
+                                xin=fpn_outs,
+                                labels=targets,
+                                imgs=images,
+                                )
+                return loss_dict
+            else:
+                outputs = self.head(
+                fpn_outs, 
+                imgs=images, 
+                conf_thre=self.conf_thre, 
+                nms_thre=self.nms_thre
+                )
+                return outputs
 
 
 def build_local_model(config, device):
