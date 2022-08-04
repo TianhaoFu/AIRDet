@@ -5,6 +5,7 @@ import copy
 
 from .giraffe_fpn import GiraffeNeck
 from .pafpn import PAFPN
+from .giraffe_fpn_v2 import GiraffeNeckV2
 
 
 def build_neck(cfg):
@@ -14,3 +15,5 @@ def build_neck(cfg):
         return PAFPN(**neck_cfg)
     elif name == "GiraffeNeck":
         return GiraffeNeck(**neck_cfg)
+    elif name == "GiraffeNeckV2":
+        return GiraffeNeckV2(**neck_cfg)
