@@ -19,44 +19,76 @@ class GiraffeNeckV2(nn.Module):
         depthwise=False,
         act="silu",
         spp=True,
+        reparam_mode=True,
     ):
         super().__init__()
         self.in_features = in_features
         self.in_channels = in_channels
         Conv = DWConv if depthwise else BaseConv
 
+        reparam_mode = reparam_mode
+
         self.upsample = nn.Upsample(scale_factor=2, mode="nearest")
 
         # node x3: input x0, x1
         self.bu_conv13 = Conv(
             int(in_channels[1] * width), int(in_channels[1] * width), 3, 2, act=act)
-        self.merge_3 = CSPStage(
-            'BasicBlock',
-            int((in_channels[1] + in_channels[2]) * width),
-            int(in_channels[2] * width),
-            round(3 * depth),
-            act = act,
-            spp = spp)
+        if reparam_mode:
+            self.merge_3 = CSPStage(
+                'BasicBlock',
+                int((in_channels[1] + in_channels[2]) * width),
+                int(in_channels[2] * width),
+                round(3 * depth),
+                act = act,
+                spp = spp)
+        else:
+            self.merge_3 = CSPLayer(
+                int((in_channels[1] + in_channels[2]) * width),
+                int(in_channels[2] * width),
+                round(3 * depth),
+                False,
+                depthwise=depthwise,
+                act = act)
 
         # node x4: input x1, x2, x3
         self.bu_conv24 = Conv(
             int(in_channels[0] * width), int(in_channels[0] * width), 3, 2, act=act)
-        self.merge_4 = CSPStage(
-            'BasicBlock',
-            int((in_channels[0] + in_channels[1] + in_channels[2]) * width),
-            int(in_channels[1] * width),
-            round(3 * depth),
-            act = act,
-            spp = spp)
+        if reparam_mode:
+            self.merge_4 = CSPStage(
+                'BasicBlock',
+                int((in_channels[0] + in_channels[1] + in_channels[2]) * width),
+                int(in_channels[1] * width),
+                round(3 * depth),
+                act = act,
+                spp = spp)
+        else:
+            self.merge_4 = CSPLayer(
+                int((in_channels[0] + in_channels[1] + in_channels[2]) * width),
+                int(in_channels[1] * width),
+                round(3 * depth),
+                False,
+                depthwise=depthwise,
+                act = act)
+
 
         # node x5: input x2, x4
-        self.merge_5 = CSPStage(
-            'BasicBlock',
-            int((in_channels[1] + in_channels[0]) * width),
-            int(in_channels[0] * width),
-            round(3 * depth),
-            act = act,
-            spp = spp)
+        if reparam_mode:
+            self.merge_5 = CSPStage(
+                'BasicBlock',
+                int((in_channels[1] + in_channels[0]) * width),
+                int(in_channels[0] * width),
+                round(3 * depth),
+                act = act,
+                spp = spp)
+        else:
+            self.merge_5 = CSPLayer(
+                int((in_channels[1] + in_channels[0]) * width),
+                int(in_channels[0] * width),
+                round(3 * depth),
+                False,
+                depthwise=depthwise,
+                act = act)
+
 
         # node x8: input x4, x5
         # self.merge_8 = CSPStage(
@@ -72,26 +104,45 @@ class GiraffeNeckV2(nn.Module):
             int(in_channels[0] * width), int(in_channels[0] * width), 3, 2, act=act)
         self.bu_conv87 = Conv(
             int(in_channels[0] * width), int(in_channels[0] * width), 3, 2, act=act)
-        self.merge_7 = CSPStage(
-           'BasicBlock',
-           int((in_channels[0] + in_channels[1]) * width),
-           int(in_channels[1] * width),
-           round(3 * depth),
-           act = act,
-           spp = spp)
+        if reparam_mode:
+            self.merge_7 = CSPStage(
+               'BasicBlock',
+               int((in_channels[0] + in_channels[1]) * width),
+               int(in_channels[1] * width),
+               round(3 * depth),
+               act = act,
+               spp = spp)
+        else:
+            self.merge_7 = CSPLayer(
+               int((in_channels[0] + in_channels[1]) * width),
+               int(in_channels[1] * width),
+               round(3 * depth),
+               False,
+               depthwise=depthwise,
+               act = act)
+
 
         # node x6: input x3, x4, x7
         self.bu_conv46 = Conv(
             int(in_channels[1] * width), int(in_channels[1] * width), 3, 2, act=act)
         self.bu_conv76 = Conv(
             int(in_channels[1] * width), int(in_channels[1] * width), 3, 2, act=act)
-        self.merge_6 = CSPStage(
-           'BasicBlock',
-           int((in_channels[1]*2 + in_channels[2]) * width),
-           int(in_channels[2] * width),
-           round(3 * depth),
-           act = act,
-           spp = spp)
+        if reparam_mode:
+            self.merge_6 = CSPStage(
+               'BasicBlock',
+               int((in_channels[1]*2 + in_channels[2]) * width),
+               int(in_channels[2] * width),
+               round(3 * depth),
+               act = act,
+               spp = spp)
+        else:
+            self.merge_6 = CSPLayer(
+               int((in_channels[1]*2 + in_channels[2]) * width),
+               int(in_channels[2] * width),
+               round(3 * depth),
+               False,
+               depthwise=depthwise,
+               act = act)
 
 
     def init_weights(self):
