@@ -185,8 +185,9 @@ class RepVGGBlock(nn.Module):
 class BasicBlock(nn.Module):
     def __init__(self, ch_in, ch_out, act='relu', shortcut=True):
         super(BasicBlock, self).__init__()
-        assert ch_in == ch_out
-        self.conv1 = ConvBNLayer(ch_in, ch_out, 3, stride=1, padding=1, act=act)
+        # assert ch_in == ch_out
+        # self.conv1 = ConvBNLayer(ch_in, ch_out, 3, stride=1, padding=1, act=act)
+        self.conv1 = ConvBNLayer(ch_in, ch_out, 1, stride=1, padding=0, act=act)
         self.conv2 = RepVGGBlock(ch_out, ch_out, act=act)
         self.shortcut = shortcut
 
@@ -238,13 +239,14 @@ class CSPStage(nn.Module):
 
         ch_mid = int(ch_out // 2)
         self.conv1 = ConvBNLayer(ch_in, ch_mid, 1, act=act)
-        self.conv2 = ConvBNLayer(ch_in, ch_mid, 1, act=act)
+        # self.conv2 = ConvBNLayer(ch_in, ch_mid, 1, act=act)
         self.convs = nn.Sequential()
 
-        next_ch_in = ch_mid
+        # next_ch_in = ch_mid
+        next_ch_in = ch_in
         for i in range(n):
             if block_fn == 'BasicBlock':
-                self.convs.add_module(str(i), BasicBlock(next_ch_in, ch_mid, act=act, shortcut=True))
+                self.convs.add_module(str(i), BasicBlock(next_ch_in, ch_mid, act=act, shortcut=False))
             else:
                 raise NotImplementedError
             if i == (n - 1) // 2 and spp:
@@ -258,8 +260,8 @@ class CSPStage(nn.Module):
 
     def forward(self, x):
         y1 = self.conv1(x)
-        y2 = self.conv2(x)
-        y2 = self.convs(y2)
+        # y2 = self.conv2(x)
+        y2 = self.convs(x)
         y = torch.cat([y1, y2], axis=1)
         y = self.conv3(y)
         return y
