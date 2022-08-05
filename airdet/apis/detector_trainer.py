@@ -254,6 +254,7 @@ class Trainer:
                 if self.config.training.augmentation.mosaic:
                     logger.info("--->No mosaic aug now!")
                     self.train_loader.batch_sampler.set_mosaic(False)
+                    self.eval_interval_iters = self.config.training.iters_per_epoch
                 self.save_ckpt(ckpt_name="last_mosaic_epoch", local_rank = local_rank)
             # log needed information
             if (cur_iter + 1) % self.config.miscs.print_interval_iters == 0:

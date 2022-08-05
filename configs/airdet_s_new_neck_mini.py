@@ -11,7 +11,7 @@ class Config(MyConfig):
         self.exp_name = os.path.split(os.path.realpath(__file__))[1].split(".")[0]
         self.miscs.eval_interval_epochs = 10
 
-        self.training.train_ann = ('coco_2017_train_mini',)
+        self.dataset.train_ann = ('coco_2017_train_mini',)
 
         self.model.backbone.act = 'relu'
         self.model.backbone.wid_mul = 0.5
