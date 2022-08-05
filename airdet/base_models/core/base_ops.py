@@ -268,36 +268,6 @@ class Focus(nn.Module):
         return self.conv(x)
 
 
-
-class fast_Focus(nn.Module):
-    def __init__(self, in_channels, out_channels, ksize=1, stride=1, act="silu"):
-        super(Focus, self).__init__()
-        self.conv1 = self.focus_conv(w1=1.0)
-        self.conv2 = self.focus_conv(w3=1.0)
-        self.conv3 = self.focus_conv(w2=1.0)
-        self.conv4 = self.focus_conv(w4=1.0)
-
-        self.conv = BaseConv(in_channels * 4, out_channels, ksize, stride, act=act)
-
-    def forward(self, x):
-        return self.conv(torch.cat([self.conv1(x), self.conv2(x), self.conv3(x), self.conv4(x)], 1))
-
-    def focus_conv(self, w1=0.0, w2=0.0, w3=0.0, w4=0.0):
-        conv = nn.Conv2d(3, 3, 2, 2, groups=3, bias=False)
-        conv.weight = self.init_weights_constant(w1, w2, w3, w4)
-        conv.weight.requires_grad = False
-        return conv
-
-    def init_weights_constant(self, w1=0.0, w2=0.0, w3=0.0, w4=0.0):
-        return nn.Parameter(torch.tensor(
-        [[[[w1, w2],
-           [w3, w4]]],
-        [[[w1, w2],
-          [w3, w4]]],
-        [[[w1, w2],
-          [w3, w4]]]]))
-
-
 # shufflenet block
 def channel_shuffle(x, groups=2):
     bat_size, channels, w, h = x.shape
@@ -428,5 +398,22 @@ class ShuffleCSPLayer(nn.Module):
         x = torch.cat((x_1, x_2), dim=1)
         # add channel shuffle
         return channel_shuffle(x, 2)
+
+
+class ESEAttn(nn.Module):
+    def __init__(self, feat_channels, act):
+        super(ESEAttn, self).__init__()
+        self.fc = nn.Conv2d(feat_channels, feat_channels, 1)
+        self.sig = nn.Sigmoid()
+        self.conv = BaseConv(feat_channels, feat_channels, 1, act=act)
+
+        self._init_weights()
+
+    def _init_weights(self):
+        nn.init.normal_(self.fc.weight, mean=0, std=0.001)
+
+    def forward(self, feat, avg_feat):
+        weight = self.sig(self.fc(avg_feat))
+        return self.conv(feat * weight)
 
 
