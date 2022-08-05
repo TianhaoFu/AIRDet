@@ -14,6 +14,10 @@ class DatasetCatalog(object):
             "img_dir": "objects365/val",
             "ann_file": "objects365/objects365_val.json"
         },
+        "coco_2017_train_mini": {
+            "img_dir": "coco/train2017",
+            "ann_file": "coco/annotations/instances_train2017_minieven.json"
+        },
         "coco_2017_train": {
             "img_dir": "coco/train2017",
             "ann_file": "coco/annotations/instances_train2017.json"
