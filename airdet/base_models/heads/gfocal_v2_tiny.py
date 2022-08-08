@@ -248,7 +248,7 @@ class GFocalHead_Tiny(nn.Module):
         mlvl_priors = torch.cat(mlvl_priors_list, dim=1)
 
         # forward for bboxes and classification prediction
-        cls_scores, bbox_preds = multi_apply(
+        cls_scores, bbox_preds, bbox_before_softmax = multi_apply(
             self.forward_single,
             xin,
             self.cls_convs,
@@ -260,11 +260,13 @@ class GFocalHead_Tiny(nn.Module):
             )
         cls_scores = torch.cat(cls_scores, dim=1)
         bbox_preds = torch.cat(bbox_preds, dim=1)
+        bbox_before_softmax = torch.cat(bbox_before_softmax, dim=1)
 
         # calculating losses
         loss = self.loss(
             cls_scores,
             bbox_preds,
+            bbox_before_softmax,
             gt_bbox_list,
             gt_cls_list,
             mlvl_priors)
@@ -329,7 +331,9 @@ class GFocalHead_Tiny(nn.Module):
 
         bbox_pred = scale(gfl_reg(reg_feat)).float()
         N, C, H, W = bbox_pred.size()
-
+        if self.training:
+            bbox_before_softmax = bbox_pred.reshape(N, 4, self.reg_max+1, H, W)
+            bbox_before_softmax = bbox_before_softmax.flatten(start_dim=3).permute(0,3,1,2)
         bbox_pred = F.softmax(bbox_pred.reshape(N, 4, self.reg_max+1, H, W), dim=2)
         prob_topk, _ = bbox_pred.topk(self.reg_topk, dim=2)
 
@@ -344,8 +348,10 @@ class GFocalHead_Tiny(nn.Module):
 
         cls_score = cls_score.flatten(start_dim=2).permute(0,2,1) # N, h*w, self.num_classes+1
         bbox_pred = bbox_pred.flatten(start_dim=3).permute(0,3,1,2) # N, h*w, 4, self.reg_max+1
-
-        return cls_score, bbox_pred
+        if self.training:
+            return cls_score, bbox_pred, bbox_before_softmax
+        else:
+            return cls_score, bbox_pred
 
     def get_single_level_center_priors(self,
                                        batch_size,
@@ -371,6 +377,7 @@ class GFocalHead_Tiny(nn.Module):
     def loss(self,
              cls_scores,
              bbox_preds,
+             bbox_before_softmax,
              gt_bboxes,
              gt_labels,
              mlvl_center_priors,
@@ -403,7 +410,8 @@ class GFocalHead_Tiny(nn.Module):
         dfl_targets = torch.cat(dfl_targets_list, dim=0)
 
         cls_scores = cls_scores.reshape(-1, self.cls_out_channels)
-        bbox_preds = bbox_preds.reshape(-1, 4 * (self.reg_max + 1))
+        #bbox_preds = bbox_preds.reshape(-1, 4 * (self.reg_max + 1))
+        bbox_before_softmax = bbox_before_softmax.reshape(-1, 4 * (self.reg_max + 1))
         decoded_bboxes = decoded_bboxes.reshape(-1, 4)
 
         loss_qfl = self.loss_cls(
@@ -423,7 +431,7 @@ class GFocalHead_Tiny(nn.Module):
                 avg_factor=1.0 * norm_factor,
                 )
             loss_dfl = self.loss_dfl(
-                bbox_preds[pos_inds].reshape(-1, self.reg_max+1),
+                bbox_before_softmax[pos_inds].reshape(-1, self.reg_max+1),
                 dfl_targets[pos_inds].reshape(-1),
                 weight=weight_targets[:, None].expand(-1, 4).reshape(-1),
                 avg_factor=4.0 * norm_factor,
