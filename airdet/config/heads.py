@@ -16,7 +16,8 @@ GFocalV2 = { "name" : "GFocalV2",
            "conv_groups": 2,
            "conv_type": "BaseConv",
            "nms_conf_thre": 0.05,
-           "nms_iou_thre": 0.7
+           "nms_iou_thre": 0.7,
+           "reparam":False,
          }
 
 
