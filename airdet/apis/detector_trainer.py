@@ -160,6 +160,7 @@ class Trainer:
     def train(self, local_rank):
         # build model
         self.model = build_local_model(self.config, self.device)
+        print(self.model)
                 # build optimizer
         self.optimizer = self.build_optimizer()
 

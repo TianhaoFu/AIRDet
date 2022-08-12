@@ -4,6 +4,7 @@
 
 import argparse
 import os
+import onnx
 from loguru import logger
 
 import torch
@@ -145,8 +146,16 @@ def main():
         output_names=[args.output],
         opset_version=args.opset,
     )
+    onnx_model =  onnx.load(output_name)
+    try:
+        import onnxsim
+        logger.info("Starting to simplify ONNX...")
+        onnx_model, check = onnxsim.simplify(onnx_model)
+        assert check, 'check failed'
+    except Exception as e:
+        logger.info(f"simplify failed: {e}")
+    onnx.save(onnx_model, output_name)
     logger.info("generated onnx model named {}".format(output_name))
-
     if args.trt:
         trt_export(output_name, args.batch_size, args.img_size, args.img_size, args.half)
 

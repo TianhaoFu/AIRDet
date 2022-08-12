@@ -91,11 +91,13 @@ class GFocalHead_Tiny(nn.Module):
                  nms_conf_thre=0.05,
                  nms_iou_thre=0.7,
                  use_ese=False,
+                 reparam=False,
                  **kwargs):
         self.nms = nms
         self.strides = strides
         self.num_classes = num_classes
         self.in_channels = in_channels
+        self.reparam  = reparam
         self.feat_channels = feat_channels if isinstance(feat_channels, list) \
                                 else [feat_channels] * len(self.strides)
         self.cls_out_channels = num_classes + 1 # add 1 for keep consistance with former models
@@ -151,7 +153,8 @@ class GFocalHead_Tiny(nn.Module):
                         stride=1,
                         groups=self.conv_groups,
                         norm=self.norm,
-                        act=self.act))
+                        act=self.act,
+                        reparam=self.reparam))
             reg_convs.append(
                     self.conv_module(
                         chn,
@@ -160,7 +163,8 @@ class GFocalHead_Tiny(nn.Module):
                         stride=1,
                         groups=self.conv_groups,
                         norm=self.norm,
-                        act=self.act))
+                        act=self.act,
+                        reparam=self.reparam))
 
         conf_vector = [nn.Conv2d(4 * self.total_dim, self.reg_channels, 1)]
         conf_vector += [nn.ReLU(inplace=True)]

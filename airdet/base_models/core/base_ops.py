@@ -7,6 +7,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import math
+from .repvgg_block import RepVggBlock
 
 
 class SiLU(nn.Module):
@@ -39,33 +40,44 @@ class BaseConv(nn.Module):
     """A Conv2d -> Batchnorm -> silu/leaky relu block"""
 
     def __init__(
-        self, in_channels, out_channels, ksize, stride=1, groups=1, bias=False, act="silu", norm='bn'
+        self, in_channels, out_channels, ksize, stride=1, groups=1, bias=False, act="silu", norm='bn', reparam=False,
     ):
         super().__init__()
         # same padding
         pad = (ksize - 1) // 2
-        self.conv = nn.Conv2d(
-            in_channels,
-            out_channels,
-            kernel_size=ksize,
-            stride=stride,
-            padding=pad,
-            groups=groups,
-            bias=bias,
-        )
+        if reparam:
+            self.conv = RepVggBlock(
+                in_channels,
+                out_channels,
+                kernel_size=ksize,
+                stride=stride,
+                padding=pad,
+                groups=groups,
+                )
+        else:
+            self.conv = nn.Conv2d(
+                in_channels,
+                out_channels,
+                kernel_size=ksize,
+                stride=stride,
+                padding=pad,
+                groups=groups,
+                bias=bias,
+            )
         if norm is not None:
             self.bn = get_norm(norm, out_channels, inplace=True)
         if act is not None:
             self.act = get_activation(act, inplace=True)
         self.with_norm = norm is not None
         self.with_act = act is not None
+        self.reparam = reparam
 
     def forward(self, x):
         x = self.conv(x)
-        if self.with_norm:
+        if self.with_norm and not self.reparam:
             # x = self.norm(x)
             x = self.bn(x)
-        if self.with_act:
+        if self.with_act and not self.reparam:
             x = self.act(x)
         return x
 
@@ -145,12 +157,16 @@ class Bottleneck(nn.Module):
         expansion=0.5,
         depthwise=False,
         act="silu",
+        reparam=False,
     ):
         super().__init__()
         hidden_channels = int(out_channels * expansion)
         Conv = DWConv if depthwise else BaseConv
-        self.conv1 = BaseConv(in_channels, hidden_channels, 1, stride=1, act=act)
-        self.conv2 = Conv(hidden_channels, out_channels, 3, stride=1, act=act)
+        self.conv1 = BaseConv(in_channels, hidden_channels, 3, stride=1, act=act)
+        if reparam:
+            self.conv2 = RepVggBlock(hidden_channels, out_channels, 3, stride=1, act=act)
+        else:
+            self.conv2 = Conv(hidden_channels, out_channels, 3, stride=1, act=act)
         self.use_add = shortcut and in_channels == out_channels
 
     def forward(self, x):
@@ -215,6 +231,7 @@ class CSPLayer(nn.Module):
         expansion=0.5,
         depthwise=False,
         act="silu",
+        reparam=False,
     ):
         """
         Args:
@@ -230,7 +247,7 @@ class CSPLayer(nn.Module):
         self.conv3 = BaseConv(2 * hidden_channels, out_channels, 1, stride=1, act=act)
         module_list = [
             Bottleneck(
-                hidden_channels, hidden_channels, shortcut, 1.0, depthwise, act=act
+                hidden_channels, hidden_channels, shortcut, 1.0, depthwise, act=act, reparam=reparam
             )
             for _ in range(n)
         ]

@@ -6,6 +6,7 @@ CSPDarknet = {"name": "CSPDarknet",
             "out_features": ("dark3", "dark4", "dark5"),
             "depthwise": False,
             "act": "silu",
+            "reparam": False,
             }
 
 
