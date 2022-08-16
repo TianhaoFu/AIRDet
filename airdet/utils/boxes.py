@@ -113,21 +113,14 @@ def filter_results(boxlist, num_classes, nms_thre):
     return boxlist
 
 
-def postprocess_gfocal(prediction, num_classes, conf_thre=0.7, nms_thre=0.45, imgs=None):
-    box_corner = prediction.new(prediction.shape)
-    box_corner[:, :, 0] = prediction[:, :, 0] - prediction[:, :, 2] / 2
-    box_corner[:, :, 1] = prediction[:, :, 1] - prediction[:, :, 3] / 2
-    box_corner[:, :, 2] = prediction[:, :, 0] + prediction[:, :, 2] / 2
-    box_corner[:, :, 3] = prediction[:, :, 1] + prediction[:, :, 3] / 2
-    prediction[:, :, :4] = box_corner[:, :, :4]
-    output = [None for _ in range(len(prediction))]
-    for i, image_pred in enumerate(prediction):
+def postprocess_gfocal(cls_scores, bbox_preds, num_classes, conf_thre=0.7, nms_thre=0.45, imgs=None):
+    batch_size = bbox_preds.size(0)
+    output = [None for _ in range(batch_size)]
+    for i in range(batch_size):
         # If none are remaining => process next image
-        if not image_pred.size(0):
+        if not bbox_preds[i].size(0):
             continue
-        multi_bboxes = image_pred[:, :4]
-        multi_scores = image_pred[:, 5:]
-        detections, scores, labels = multiclass_nms(multi_bboxes, multi_scores, conf_thre, nms_thre, 500)
+        detections, scores, labels = multiclass_nms(bbox_preds[i], cls_scores[i], conf_thre, nms_thre, 500)
         detections = torch.cat((detections, scores[:, None], scores[:, None], labels[:, None]), dim=1)
 
         if output[i] is None:

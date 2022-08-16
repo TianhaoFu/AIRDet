@@ -2,7 +2,8 @@
 
 GFocalV2 = { "name" : "GFocalV2",
            "num_classes": 80,
-           "decode_in_inference": True,
+           "nms": True,
+           "use_ese": False,
            "in_channels": [96, 160, 384],
            "stacked_convs": 4,
            "reg_channels": 64,
@@ -14,8 +15,9 @@ GFocalV2 = { "name" : "GFocalV2",
            "start_kernel_size": 3,
            "conv_groups": 2,
            "conv_type": "BaseConv",
-           "octbase": 5,
-           "l1_switch": "False",
+           "nms_conf_thre": 0.05,
+           "nms_iou_thre": 0.7,
+           "reparam":False,
          }
 
 

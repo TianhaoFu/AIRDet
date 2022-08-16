@@ -7,6 +7,7 @@ CSPDarknet = {"name": "CSPDarknet",
             "depthwise": False,
             "acmix": False,
             "act": "silu",
+            "reparam": False,
             }
 
 

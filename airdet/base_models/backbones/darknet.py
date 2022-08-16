@@ -16,6 +16,7 @@ class CSPDarknet(nn.Module):
         depthwise=False,
         acmix=False,
         act="silu",
+        reparam=False,
     ):
         super(CSPDarknet, self).__init__()
         assert out_features, "please provide output features of Darknet"
@@ -38,6 +39,7 @@ class CSPDarknet(nn.Module):
                 depthwise=depthwise,
                 acmix=False,
                 act=act,
+                reparam=reparam,
             ),
         )
 
@@ -51,6 +53,7 @@ class CSPDarknet(nn.Module):
                 depthwise=depthwise,
                 acmix=False,
                 act=act,
+                reparam=reparam,
             ),
         )
 
@@ -64,6 +67,7 @@ class CSPDarknet(nn.Module):
                 depthwise=depthwise,
                 acmix=False,
                 act=act,
+                reparam=reparam,
             ),
         )
 
@@ -79,6 +83,7 @@ class CSPDarknet(nn.Module):
                 depthwise=depthwise,
                 acmix=acmix,
                 act=act,
+                reparam=reparam,
             ),
         )
 

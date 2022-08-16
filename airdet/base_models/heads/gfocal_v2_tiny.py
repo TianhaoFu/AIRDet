@@ -7,7 +7,7 @@ import functools
 import torch.nn as nn
 import torch.nn.functional as F
 
-from ..core.base_ops import BaseConv, DWConv
+from ..core.base_ops import BaseConv, DWConv, ESEAttn
 from ..core.ota_assigner import SimOTAAssigner
 from ..core.weight_init import normal_init, bias_init_with_prob
 from ..core.bbox_calculator import bbox_overlaps, multiclass_nms
@@ -15,22 +15,6 @@ from ..core.utils import multi_apply, unmap, reduce_mean, images_to_levels, Scal
 
 from ..losses.gfocal_loss import GIoULoss, DistributionFocalLoss, QualityFocalLoss
 from airdet.utils import postprocess_gfocal as postprocess
-
-def xyxy2CxCywh(xyxy, size=None):
-    x1 = xyxy[..., 0]
-    y1 = xyxy[..., 1]
-    x2 = xyxy[..., 2]
-    y2 = xyxy[..., 3]
-
-    cx = (x1+x2) /2
-    cy = (y1+y2) /2
-
-    w = x2 - x1
-    h = y2 - y1
-    if size is not None:
-    	w = w.clamp(min=0, max=size[1])
-    	h = h.clamp(min=0, max=size[0])
-    return torch.stack([cx, cy, w, h], axis=-1)
 
 
 def distance2bbox(points, distance, max_shape=None):
@@ -47,6 +31,7 @@ def distance2bbox(points, distance, max_shape=None):
         y2 = y2.clamp(min=0, max=max_shape[0])
     return torch.stack([x1, y1, x2, y2], -1)
 
+
 def bbox2distance(points, bbox, max_dis=None, eps=0.1):
     """Decode bounding box based on distances.
     """
@@ -60,6 +45,7 @@ def bbox2distance(points, bbox, max_dis=None, eps=0.1):
         right = right.clamp(min=0, max=max_dis - eps)
         bottom = bottom.clamp(min=0, max=max_dis - eps)
     return torch.stack([left, top, right, bottom], -1)
+
 
 class Integral(nn.Module):
     """A fixed layer for calculating integral result from distribution.
@@ -75,12 +61,10 @@ class Integral(nn.Module):
         """Forward feature from the regression head to get integral result of
         bounding box location.
         """
-        shape = x.size()
-        x = F.softmax(x.reshape(*shape[:-1], 4, self.reg_max + 1), dim=-1)
-        b, nb, ne, _ = x.size()
-        x = x.reshape(b*nb*ne, self.reg_max+1)
+        b, hw, _, _ = x.size()
+        x = x.reshape(b*hw*4, self.reg_max+1)
         y = self.project.type_as(x).unsqueeze(1)
-        x = torch.matmul(x, y).reshape(b, nb, 4)
+        x = torch.matmul(x, y).reshape(b, hw, 4)
         return x
 
 
@@ -101,19 +85,21 @@ class GFocalHead_Tiny(nn.Module):
                  add_mean=True,
                  norm='gn',
                  act='relu',
-                 start_kernel_size=3,
                  conv_groups=1,
                  conv_type='BaseConv',
-                 simOTA_cls_weight=1.0,
-                 simOTA_iou_weight=3.0,
-                 octbase=8,
+                 nms=True,
+                 nms_conf_thre=0.05,
+                 nms_iou_thre=0.7,
+                 use_ese=False,
+                 reparam=False,
                  **kwargs):
+        self.nms = nms
+        self.strides = strides
         self.num_classes = num_classes
         self.in_channels = in_channels
-        self.strides = strides
+        self.reparam  = reparam
         self.feat_channels = feat_channels if isinstance(feat_channels, list) \
                                 else [feat_channels] * len(self.strides)
-
         self.cls_out_channels = num_classes + 1 # add 1 for keep consistance with former models
                                                 # and will be deprecated in future.
         self.stacked_convs = stacked_convs
@@ -123,20 +109,23 @@ class GFocalHead_Tiny(nn.Module):
         self.reg_channels = reg_channels
         self.add_mean = add_mean
         self.total_dim = reg_topk
-        self.start_kernel_size = start_kernel_size
-        self.decode_in_inference = True # will be set as False, when trying to convert onnx models
+        self.use_ese = use_ese
 
+        self.feat_size = [torch.zeros(4) for _ in strides]
         self.norm = norm
         self.act = act
         self.conv_module = DWConv if conv_type=='DWConv' else BaseConv
+
+        self.nms_conf_thre = nms_conf_thre
+        self.nms_iou_thre = nms_iou_thre
 
         if add_mean:
             self.total_dim += 1
 
         self.assigner = SimOTAAssigner(
             center_radius=2.5,
-            cls_weight=simOTA_cls_weight,
-            iou_weight=simOTA_iou_weight)
+            cls_weight=1.0,
+            iou_weight=3.0)
 
         super(GFocalHead_Tiny, self).__init__()
         self.integral = Integral(self.reg_max)
@@ -147,34 +136,38 @@ class GFocalHead_Tiny(nn.Module):
         self._init_layers()
 
     def _build_not_shared_convs(self, in_channel, feat_channels):
-        self.relu = nn.ReLU(inplace=True)
         cls_convs = nn.ModuleList()
         reg_convs = nn.ModuleList()
 
+        if self.use_ese:
+            cls_convs.append(ESEAttn(in_channel, act=self.act))
+            reg_convs.append(ESEAttn(in_channel, act=self.act))
+
         for i in range(self.stacked_convs):
             chn = feat_channels if i > 0 else in_channel
-            kernel_size = 3 if i > 0 else self.start_kernel_size
             cls_convs.append(
                     self.conv_module(
                         chn,
                         feat_channels,
-                        kernel_size,
+                        3,
                         stride=1,
                         groups=self.conv_groups,
                         norm=self.norm,
-                        act=self.act))
+                        act=self.act,
+                        reparam=self.reparam))
             reg_convs.append(
                     self.conv_module(
                         chn,
                         feat_channels,
-                        kernel_size,
+                        3,
                         stride=1,
                         groups=self.conv_groups,
                         norm=self.norm,
-                        act=self.act))
+                        act=self.act,
+                        reparam=self.reparam))
 
         conf_vector = [nn.Conv2d(4 * self.total_dim, self.reg_channels, 1)]
-        conf_vector += [self.relu]
+        conf_vector += [nn.ReLU(inplace=True)]
         conf_vector += [nn.Conv2d(self.reg_channels, 1, 1), nn.Sigmoid()]
         reg_conf = nn.Sequential(*conf_vector)
 
@@ -182,7 +175,6 @@ class GFocalHead_Tiny(nn.Module):
 
     def _init_layers(self):
         """Initialize layers of the head."""
-        self.relu = nn.ReLU(inplace=True)
         self.cls_convs = nn.ModuleList()
         self.reg_convs = nn.ModuleList()
         self.reg_confs = nn.ModuleList()
@@ -231,7 +223,13 @@ class GFocalHead_Tiny(nn.Module):
             normal_init(self.gfl_cls[i], std=0.01, bias=bias_cls)
             normal_init(self.gfl_reg[i], std=0.01)
 
-    def forward(self, xin, labels=None, imgs=None, label_assign=None, tea=False, conf_thre=0.05, nms_thre=0.7):
+    def forward(self, xin, labels=None, imgs=None):
+        if self.training:
+            return self.forward_train(xin, labels=labels, imgs=imgs)
+        else:
+            return self.forward_eval(xin=xin, labels=labels, imgs=imgs)
+
+    def forward_train(self, xin, labels=None, imgs=None):
 
         # prepare labels during training
         b, c, h, w = xin[0].shape
@@ -254,6 +252,47 @@ class GFocalHead_Tiny(nn.Module):
         mlvl_priors = torch.cat(mlvl_priors_list, dim=1)
 
         # forward for bboxes and classification prediction
+        cls_scores, bbox_preds, bbox_before_softmax = multi_apply(
+            self.forward_single,
+            xin,
+            self.cls_convs,
+            self.reg_convs,
+            self.gfl_cls,
+            self.gfl_reg,
+            self.reg_confs,
+            self.scales,
+            )
+        cls_scores = torch.cat(cls_scores, dim=1)
+        bbox_preds = torch.cat(bbox_preds, dim=1)
+        bbox_before_softmax = torch.cat(bbox_before_softmax, dim=1)
+
+        # calculating losses
+        loss = self.loss(
+            cls_scores,
+            bbox_preds,
+            bbox_before_softmax,
+            gt_bbox_list,
+            gt_cls_list,
+            mlvl_priors)
+        return loss
+
+
+    def forward_eval(self, xin, labels=None, imgs=None):
+
+        # prepare priors for label assignment and bbox decode
+        if self.feat_size[0][2:4] != xin[0].shape[2:4]:
+            mlvl_priors_list = [
+                self.get_single_level_center_priors(
+                    xin[i].shape[0],
+                    xin[i].shape[-2:],
+                    stride,
+                    dtype=torch.float32,
+                    device=xin[0].device)
+                    for i, stride in enumerate(self.strides)]
+            self.mlvl_priors = torch.cat(mlvl_priors_list, dim=1)
+            self.feat_size[0] = xin[0].shape
+
+        # forward for bboxes and classification prediction
         cls_scores, bbox_preds = multi_apply(
             self.forward_single,
             xin,
@@ -264,28 +303,17 @@ class GFocalHead_Tiny(nn.Module):
             self.reg_confs,
             self.scales,
             )
-        flatten_cls_scores = torch.cat(cls_scores, dim=1)
-        flatten_bbox_preds = torch.cat(bbox_preds, dim=1)
+        cls_scores = torch.cat(cls_scores, dim=1)[:, :, :self.num_classes]
+        bbox_preds = torch.cat(bbox_preds, dim=1)
+        # batch bbox decode
+        bbox_preds = self.integral(bbox_preds) * self.mlvl_priors[..., 2, None]
+        bbox_preds = distance2bbox(self.mlvl_priors[..., :2], bbox_preds)
 
-        # calculating losses or bboxes decoded
-        if self.training or tea:
-            loss = self.loss(
-                flatten_cls_scores,
-                flatten_bbox_preds,
-                gt_bbox_list,
-                gt_cls_list,
-                mlvl_priors,
-                label_assign=label_assign,
-                tea=tea)
-            return loss
-        else:
-            output = self.get_bboxes(
-                flatten_cls_scores,
-                flatten_bbox_preds,
-                mlvl_priors)
-            if self.decode_in_inference:
-                output = postprocess(output, self.num_classes, conf_thre, nms_thre, imgs)
+        if self.nms:
+            output = postprocess(cls_scores, bbox_preds,
+                self.num_classes, self.nms_conf_thre, self.nms_iou_thre, imgs)
             return output
+        return cls_scores, bbox_preds
 
     def forward_single(self, x, cls_convs, reg_convs, gfl_cls, gfl_reg, reg_conf, scale):
         """Forward feature of a single scale level.
@@ -294,15 +322,24 @@ class GFocalHead_Tiny(nn.Module):
         cls_feat = x
         reg_feat = x
 
-        for cls_conv in cls_convs:
-            cls_feat = cls_conv(cls_feat)
-        for reg_conv in reg_convs:
-            reg_feat = reg_conv(reg_feat)
+        for idx, (cls_conv, reg_conv) in enumerate(zip(cls_convs, reg_convs)):
+            if self.use_ese and idx == 0:
+                avg_feat = F.adaptive_avg_pool2d(x, (1,1))
+                cls_feat = cls_conv(cls_feat, avg_feat)
+                reg_feat = reg_conv(reg_feat, avg_feat)
+            else:
+                cls_feat = cls_conv(cls_feat)
+                reg_feat = reg_conv(reg_feat)
+        if self.use_ese:
+            cls_feat = cls_feat + x
 
         bbox_pred = scale(gfl_reg(reg_feat)).float()
         N, C, H, W = bbox_pred.size()
-        prob = F.softmax(bbox_pred.reshape(N, 4, self.reg_max+1, H, W), dim=2)
-        prob_topk, _ = prob.topk(self.reg_topk, dim=2)
+        if self.training:
+            bbox_before_softmax = bbox_pred.reshape(N, 4, self.reg_max+1, H, W)
+            bbox_before_softmax = bbox_before_softmax.flatten(start_dim=3).permute(0,3,1,2)
+        bbox_pred = F.softmax(bbox_pred.reshape(N, 4, self.reg_max+1, H, W), dim=2)
+        prob_topk, _ = bbox_pred.topk(self.reg_topk, dim=2)
 
         if self.add_mean:
             stat = torch.cat([prob_topk, prob_topk.mean(dim=2, keepdim=True)],
@@ -313,9 +350,12 @@ class GFocalHead_Tiny(nn.Module):
         quality_score = reg_conf(stat.reshape(N, 4*self.total_dim, H, W))
         cls_score = gfl_cls(cls_feat).sigmoid() * quality_score
 
-        flatten_cls_score = cls_score.flatten(start_dim=2).transpose(1, 2)
-        flatten_bbox_pred = bbox_pred.flatten(start_dim=2).transpose(1, 2)
-        return flatten_cls_score, flatten_bbox_pred
+        cls_score = cls_score.flatten(start_dim=2).permute(0,2,1) # N, h*w, self.num_classes+1
+        bbox_pred = bbox_pred.flatten(start_dim=3).permute(0,3,1,2) # N, h*w, 4, self.reg_max+1
+        if self.training:
+            return cls_score, bbox_pred, bbox_before_softmax
+        else:
+            return cls_score, bbox_pred
 
     def get_single_level_center_priors(self,
                                        batch_size,
@@ -341,6 +381,7 @@ class GFocalHead_Tiny(nn.Module):
     def loss(self,
              cls_scores,
              bbox_preds,
+             bbox_before_softmax,
              gt_bboxes,
              gt_labels,
              mlvl_center_priors,
@@ -381,7 +422,8 @@ class GFocalHead_Tiny(nn.Module):
         dfl_targets = torch.cat(dfl_targets_list, dim=0)
 
         cls_scores = cls_scores.reshape(-1, self.cls_out_channels)
-        bbox_preds = bbox_preds.reshape(-1, 4 * (self.reg_max + 1))
+        #bbox_preds = bbox_preds.reshape(-1, 4 * (self.reg_max + 1))
+        bbox_before_softmax = bbox_before_softmax.reshape(-1, 4 * (self.reg_max + 1))
         decoded_bboxes = decoded_bboxes.reshape(-1, 4)
 
         loss_qfl = self.loss_cls(
@@ -390,7 +432,6 @@ class GFocalHead_Tiny(nn.Module):
         pos_inds = torch.nonzero(
                 (labels >= 0) & (labels < self.num_classes), as_tuple=False).squeeze(1)
 
-        temp_scores = bbox_overlaps(decoded_bboxes[pos_inds], bbox_targets[pos_inds], is_aligned=True)
         if len(pos_inds) > 0:
             weight_targets = cls_scores.detach()
             weight_targets = weight_targets.max(dim=1)[0][pos_inds]
@@ -402,7 +443,7 @@ class GFocalHead_Tiny(nn.Module):
                 avg_factor=1.0 * norm_factor,
                 )
             loss_dfl = self.loss_dfl(
-                bbox_preds[pos_inds].reshape(-1, self.reg_max+1),
+                bbox_before_softmax[pos_inds].reshape(-1, self.reg_max+1),
                 dfl_targets[pos_inds].reshape(-1),
                 weight=weight_targets[:, None].expand(-1, 4).reshape(-1),
                 avg_factor=4.0 * norm_factor,
@@ -533,15 +574,3 @@ class GFocalHead_Tiny(nn.Module):
 
         return pos_inds, neg_inds, pos_gt_bboxes, pos_assigned_gt_inds
 
-    def get_bboxes(self, cls_preds, reg_preds, mlvl_center_priors, img_meta=None):
-
-        device = cls_preds.device
-        batch_size = cls_preds.shape[0]
-        dis_preds = self.integral(reg_preds) * mlvl_center_priors[..., 2, None]
-        bboxes = distance2bbox(mlvl_center_priors[..., :2], dis_preds)
-
-        bboxes = xyxy2CxCywh(bboxes)
-        obj = torch.ones_like(cls_preds[..., 0:1])
-        res = torch.cat([bboxes, obj, cls_preds[..., 0:self.num_classes]], dim=-1)
-
-        return res

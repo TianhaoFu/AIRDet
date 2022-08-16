@@ -7,7 +7,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import math
-from .ACMix import ACMix
+from .repvgg_block import RepVggBlock
+
 
 class SiLU(nn.Module):
     """export-friendly version of nn.SiLU()"""
@@ -57,33 +58,44 @@ class BaseConv(nn.Module):
     """A Conv2d -> Batchnorm -> silu/leaky relu block"""
 
     def __init__(
-        self, in_channels, out_channels, ksize, stride=1, groups=1, bias=False, act="silu", norm='bn'
+        self, in_channels, out_channels, ksize, stride=1, groups=1, bias=False, act="silu", norm='bn', reparam=False,
     ):
         super().__init__()
         # same padding
         pad = (ksize - 1) // 2
-        self.conv = nn.Conv2d(
-            in_channels,
-            out_channels,
-            kernel_size=ksize,
-            stride=stride,
-            padding=pad,
-            groups=groups,
-            bias=bias,
-        )
+        if reparam:
+            self.conv = RepVggBlock(
+                in_channels,
+                out_channels,
+                kernel_size=ksize,
+                stride=stride,
+                padding=pad,
+                groups=groups,
+                )
+        else:
+            self.conv = nn.Conv2d(
+                in_channels,
+                out_channels,
+                kernel_size=ksize,
+                stride=stride,
+                padding=pad,
+                groups=groups,
+                bias=bias,
+            )
         if norm is not None:
             self.bn = get_norm(norm, out_channels, inplace=True)
         if act is not None:
             self.act = get_activation(act, inplace=True)
         self.with_norm = norm is not None
         self.with_act = act is not None
+        self.reparam = reparam
 
     def forward(self, x):
         x = self.conv(x)
-        if self.with_norm:
+        if self.with_norm and not self.reparam:
             # x = self.norm(x)
             x = self.bn(x)
-        if self.with_act:
+        if self.with_act and not self.reparam:
             x = self.act(x)
         return x
 
@@ -164,13 +176,16 @@ class Bottleneck(nn.Module):
         depthwise=False,
         acmix=False,
         act="silu",
+        reparam=False,
     ):
         super().__init__()
         hidden_channels = int(out_channels * expansion)
         Conv = DWConv if depthwise else BaseConv
-        Conv = ACMix if acmix else BaseConv
-        self.conv1 = BaseConv(in_channels, hidden_channels, 1, stride=1, act=act)
-        self.conv2 = Conv(hidden_channels, out_channels, 3, stride=1, act=act)
+        self.conv1 = BaseConv(in_channels, hidden_channels, 3, stride=1, act=act)
+        if reparam:
+            self.conv2 = RepVggBlock(hidden_channels, out_channels, 3, stride=1, act=act)
+        else:
+            self.conv2 = Conv(hidden_channels, out_channels, 3, stride=1, act=act)
         self.use_add = shortcut and in_channels == out_channels
 
     def forward(self, x):
@@ -236,6 +251,7 @@ class CSPLayer(nn.Module):
         depthwise=False,
         acmix=False,
         act="silu",
+        reparam=False,
     ):
         """
         Args:
@@ -251,7 +267,7 @@ class CSPLayer(nn.Module):
         self.conv3 = BaseConv(2 * hidden_channels, out_channels, 1, stride=1, act=act)
         module_list = [
             Bottleneck(
-                hidden_channels, hidden_channels, shortcut, 1.0, depthwise, acmix, act=act
+                hidden_channels, hidden_channels, shortcut, 1.0, depthwise, act=act, reparam=reparam
             )
             for _ in range(n)
         ]
@@ -289,34 +305,22 @@ class Focus(nn.Module):
         return self.conv(x)
 
 
+# shufflenet block
+def channel_shuffle(x, groups=2):
+    bat_size, channels, w, h = x.shape
+    group_c = channels // groups
+    x = x.view(bat_size, groups, group_c, w, h)
+    x = torch.transpose(x, 1, 2).contiguous()
+    x = x.view(bat_size, -1, w, h)
+    return x
 
-class fast_Focus(nn.Module):
-    def __init__(self, in_channels, out_channels, ksize=1, stride=1, act="silu"):
-        super(Focus, self).__init__()
-        self.conv1 = self.focus_conv(w1=1.0)
-        self.conv2 = self.focus_conv(w3=1.0)
-        self.conv3 = self.focus_conv(w2=1.0)
-        self.conv4 = self.focus_conv(w4=1.0)
 
-        self.conv = BaseConv(in_channels * 4, out_channels, ksize, stride, act=act)
-
-    def forward(self, x):
-        return self.conv(torch.cat([self.conv1(x), self.conv2(x), self.conv3(x), self.conv4(x)], 1))
-
-    def focus_conv(self, w1=0.0, w2=0.0, w3=0.0, w4=0.0):
-        conv = nn.Conv2d(3, 3, 2, 2, groups=3, bias=False)
-        conv.weight = self.init_weights_constant(w1, w2, w3, w4)
-        conv.weight.requires_grad = False
-        return conv
-
-    def init_weights_constant(self, w1=0.0, w2=0.0, w3=0.0, w4=0.0):
-        return nn.Parameter(torch.tensor(
-        [[[[w1, w2],
-           [w3, w4]]],
-        [[[w1, w2],
-          [w3, w4]]],
-        [[[w1, w2],
-          [w3, w4]]]]))
+def conv_1x1_bn(in_c, out_c, stride=1):
+    return nn.Sequential(
+      nn.Conv2d(in_c, out_c, 1, stride, 0, bias=False),
+      nn.BatchNorm2d(out_c),
+      nn.ReLU(True)
+    )
 
 
 def conv_bn(in_c, out_c, stride=2):
@@ -433,163 +437,20 @@ class ShuffleCSPLayer(nn.Module):
         return channel_shuffle(x, 2)
 
 
-def _make_divisible(v, divisor, min_value=None):
+class ESEAttn(nn.Module):
+    def __init__(self, feat_channels, act):
+        super(ESEAttn, self).__init__()
+        self.fc = nn.Conv2d(feat_channels, feat_channels, 1)
+        self.sig = nn.Sigmoid()
+        self.conv = BaseConv(feat_channels, feat_channels, 1, act=act)
 
-    if min_value is None:
-        min_value = divisor
-    new_v = max(min_value, int(v + divisor / 2) // divisor * divisor)
-    # Make sure that round down does not go down by more than 10%.
-    if new_v < 0.9 * v:
-        new_v += divisor
-    return new_v
+        self._init_weights()
 
+    def _init_weights(self):
+        nn.init.normal_(self.fc.weight, mean=0, std=0.001)
 
-class SELayer(nn.Module):
-    def __init__(self, channel, reduction=4):
-        super(SELayer, self).__init__()
-        self.avg_pool = nn.AdaptiveAvgPool2d(1)
-        self.fc = nn.Sequential(
-                nn.Linear(channel, _make_divisible(channel // reduction, 8)),
-                nn.ReLU(inplace=True),
-                nn.Linear(_make_divisible(channel // reduction, 8), channel),
-                h_sigmoid()
-        )
-
-    def forward(self, x):
-        b, c, _, _ = x.size()
-        y = self.avg_pool(x).view(b, c)
-        y = self.fc(y).view(b, c, 1, 1)
-        return x * y
+    def forward(self, feat, avg_feat):
+        weight = self.sig(self.fc(avg_feat))
+        return self.conv(feat * weight)
 
 
-def conv_3x3_bn(inp, oup, stride):
-    return nn.Sequential(
-        nn.Conv2d(inp, oup, 3, stride, 1, bias=False),
-        nn.BatchNorm2d(oup),
-        h_swish()
-    )
-
-
-def conv_1x1_bn(inp, oup):
-    return nn.Sequential(
-        nn.Conv2d(inp, oup, 1, 1, 0, bias=False),
-        nn.BatchNorm2d(oup),
-        h_swish()
-    )
-
-class InvertedResidual(nn.Module):
-    def __init__(self, inp, hidden_dim, oup, kernel_size, stride, use_se, use_hs):
-        super(InvertedResidual, self).__init__()
-        assert stride in [1, 2]
-
-        self.identity = stride == 1 and inp == oup
-
-        if inp == hidden_dim:
-            self.conv = nn.Sequential(
-                # dw
-                nn.Conv2d(hidden_dim, hidden_dim, kernel_size, stride, (kernel_size - 1) // 2, groups=hidden_dim, bias=False),
-                nn.BatchNorm2d(hidden_dim),
-                h_swish() if use_hs else nn.ReLU(inplace=True),
-                # Squeeze-and-Excite
-                SELayer(hidden_dim) if use_se else nn.Identity(),
-                # pw-linear
-                nn.Conv2d(hidden_dim, oup, 1, 1, 0, bias=False),
-                nn.BatchNorm2d(oup),
-            )
-        else:
-            self.conv = nn.Sequential(
-                # pw
-                nn.Conv2d(inp, hidden_dim, 1, 1, 0, bias=False),
-                nn.BatchNorm2d(hidden_dim),
-                h_swish() if use_hs else nn.ReLU(inplace=True),
-                # dw
-                nn.Conv2d(hidden_dim, hidden_dim, kernel_size, stride, (kernel_size - 1) // 2, groups=hidden_dim, bias=False),
-                nn.BatchNorm2d(hidden_dim),
-                # Squeeze-and-Excite
-                SELayer(hidden_dim) if use_se else nn.Identity(),
-                h_swish() if use_hs else nn.ReLU(inplace=True),
-                # pw-linear
-                nn.Conv2d(hidden_dim, oup, 1, 1, 0, bias=False),
-                nn.BatchNorm2d(oup),
-            )
-
-    def forward(self, x):
-        if self.identity:
-            return x + self.conv(x)
-        else:
-            return self.conv(x)
-
-
-# shufflenet block
-def channel_shuffle(x, groups=2):
-    bat_size, channels, w, h = x.shape
-    group_c = channels // groups
-    x = x.view(bat_size, groups, group_c, w, h)
-    x = torch.transpose(x, 1, 2).contiguous()
-    x = x.view(bat_size, -1, w, h)
-    return x
-
-
-class ShuffleBottleneck(nn.Module):
-    def __init__(self, inp, oup, stride, benchmodel):
-        super(ShuffleBottleneck, self).__init__()
-        self.benchmodel = benchmodel
-        self.stride = stride
-        assert stride in [1, 2]
-
-        oup_inc = oup//2
-        
-        if self.benchmodel == 1:
-            #assert inp == oup_inc
-        	self.banch2 = nn.Sequential(
-                # pw
-                nn.Conv2d(oup_inc, oup_inc, 1, 1, 0, bias=False),
-                nn.BatchNorm2d(oup_inc),
-                nn.ReLU(inplace=True),
-                # dw
-                nn.Conv2d(oup_inc, oup_inc, 3, stride, 1, groups=oup_inc, bias=False),
-                nn.BatchNorm2d(oup_inc),
-                # pw-linear
-                nn.Conv2d(oup_inc, oup_inc, 1, 1, 0, bias=False),
-                nn.BatchNorm2d(oup_inc),
-                nn.ReLU(inplace=True),
-            )                
-        else:                  
-            self.banch1 = nn.Sequential(
-                # dw
-                nn.Conv2d(inp, inp, 3, stride, 1, groups=inp, bias=False),
-                nn.BatchNorm2d(inp),
-                # pw-linear
-                nn.Conv2d(inp, oup_inc, 1, 1, 0, bias=False),
-                nn.BatchNorm2d(oup_inc),
-                nn.ReLU(inplace=True),
-            )        
-    
-            self.banch2 = nn.Sequential(
-                # pw
-                nn.Conv2d(inp, oup_inc, 1, 1, 0, bias=False),
-                nn.BatchNorm2d(oup_inc),
-                nn.ReLU(inplace=True),
-                # dw
-                nn.Conv2d(oup_inc, oup_inc, 3, stride, 1, groups=oup_inc, bias=False),
-                nn.BatchNorm2d(oup_inc),
-                # pw-linear
-                nn.Conv2d(oup_inc, oup_inc, 1, 1, 0, bias=False),
-                nn.BatchNorm2d(oup_inc),
-                nn.ReLU(inplace=True),
-            )
-          
-    @staticmethod
-    def _concat(x, out):
-        # concatenate along channel axis
-        return torch.cat((x, out), 1)        
-
-    def forward(self, x):
-        if 1==self.benchmodel:
-            x1 = x[:, :(x.shape[1]//2), :, :]
-            x2 = x[:, (x.shape[1]//2):, :, :]
-            out = self._concat(x1, self.banch2(x2))
-        elif 2==self.benchmodel:
-            out = self._concat(self.banch1(x), self.banch2(x))
-
-        return channel_shuffle(out, 2)

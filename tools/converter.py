@@ -4,15 +4,17 @@
 
 import argparse
 import os
+import onnx
 from loguru import logger
 
 import torch
 from torch import nn
 
 from airdet.base_models.core.base_ops import SiLU
-from airdet.utils.model_utils import replace_module
+from airdet.utils.model_utils import replace_module, get_model_info
 from airdet.config.base import parse_config
 from airdet.detectors.detector_base import Detector, build_local_model
+from airdet.base_models.core.neck_ops import RepVGGBlock
 
 def make_parser():
     parser = argparse.ArgumentParser("AIRDet converter deployment toolbox")
@@ -27,19 +29,18 @@ def make_parser():
         help="expriment description file",
     )
     parser.add_argument("-c", "--ckpt", default=None, type=str, help="ckpt path")
+    parser.add_argument("--trt", action='store_true', help="whether convert onnx into tensorrt")
+    parser.add_argument("--half", action='store_true', help="whether use fp16")
     parser.add_argument(
         "--batch_size", type=int, default=None, help="inference image batch nums"
     )
     parser.add_argument(
-        "--img_size", 
-        type=int, 
-        default="640", 
+        "--img_size",
+        type=int,
+        default="640",
         help="inference image shape"
     )
     # onnx part
-    parser.add_argument(
-        "--output-name", type=str, default="airdet.onnx", help="output name of models"
-    )
     parser.add_argument(
         "--input", default="images", type=str, help="input node name of onnx model"
     )
@@ -49,7 +50,6 @@ def make_parser():
     parser.add_argument(
         "-o", "--opset", default=11, type=int, help="onnx opset version"
     )
-
     parser.add_argument(
         "opts",
         help="Modify config options using the command-line",
@@ -61,13 +61,16 @@ def make_parser():
 
 
 @logger.catch
-def trt_export(onnx_path, batch_size, inference_h, inference_w, mode):
+def trt_export(onnx_path, batch_size, inference_h, inference_w, half):
     import tensorrt as trt
     import sys
+    if half:
+        trt_mode = "fp16"
+    else:
+        trt_mode = "fp32"
 
     TRT_LOGGER = trt.Logger()
-    trt_mode = mode.split('_')[-1]
-    engine_path = onnx_path.replace('.onnx', f'_{trt_mode}.trt')
+    engine_path = onnx_path.replace('.onnx', f'_{trt_mode}_bs{batch_size}.trt')
 
     EXPLICIT_BATCH = 1 << (int)(trt.NetworkDefinitionCreationFlag.EXPLICIT_BATCH)
 
@@ -78,7 +81,7 @@ def trt_export(onnx_path, batch_size, inference_h, inference_w, mode):
         builder.max_batch_size = batch_size
         print('Loading ONNX file from path {}...'.format(onnx_path))
 
-        if mode == 'trt_16':
+        if half:
             assert (builder.platform_has_fast_fp16 == True), "not support fp16"
             builder.fp16_mode = True
 
@@ -102,6 +105,7 @@ def main():
     args = make_parser().parse_args()
     logger.info("args value: {}".format(args))
 
+    output_name = os.path.join('deploy', args.ckpt.replace('.pth', '.onnx'))
     # init and load model
     config = parse_config(args.config_file)
     config.merge(args.opts)
@@ -111,35 +115,49 @@ def main():
 
     # build model
     model = build_local_model(config, "cuda")
-
+    print(model)
+    info = get_model_info(model, (args.img_size, args.img_size))
+    logger.info(info)
     # load model paramerters
-    ckpt = torch.load(args.ckpt, map_location="cpu")
+    #ckpt = torch.load(args.ckpt, map_location="cpu")
 
     model.eval()
-    model = model.cpu()
-    if "model" in ckpt:
-        ckpt = ckpt["model"]
-    model.load_state_dict(ckpt, strict=False)
+    #if "model" in ckpt:
+    #    ckpt = ckpt["model"]
+    #model.load_state_dict(ckpt, strict=True)
     logger.info("loading checkpoint done.")
 
     model = replace_module(model, nn.SiLU, SiLU)
-    # decouple postprocess
-    model.head.decode_in_inference = False
 
-    dummy_input = torch.randn(args.batch_size, 3, args.img_size, args.img_size)
+    for layer in model.modules():
+        if isinstance(layer, RepVGGBlock):
+            layer.switch_to_deploy()
+
+    # decouple postprocess
+    model.head.nms = False
+
+    dummy_input = torch.randn(args.batch_size, 3, args.img_size, args.img_size).to("cuda")
     predictions = model(dummy_input)
     torch.onnx._export(
         model,
         dummy_input,
-        args.output_name,
+        output_name,
         input_names=[args.input],
         output_names=[args.output],
         opset_version=args.opset,
     )
-    logger.info("generated onnx model named {}".format(args.output_name))
-
-    if(args.mode in ['trt_32', 'trt_16']):
-        trt_export(args.output_name, args.batch_size, args.img_size, args.img_size, args.mode)
+    onnx_model =  onnx.load(output_name)
+    try:
+        import onnxsim
+        logger.info("Starting to simplify ONNX...")
+        onnx_model, check = onnxsim.simplify(onnx_model)
+        assert check, 'check failed'
+    except Exception as e:
+        logger.info(f"simplify failed: {e}")
+    onnx.save(onnx_model, output_name)
+    logger.info("generated onnx model named {}".format(output_name))
+    if args.trt:
+        trt_export(output_name, args.batch_size, args.img_size, args.img_size, args.half)
 
 if __name__ == "__main__":
     main()

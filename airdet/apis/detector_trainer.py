@@ -160,6 +160,7 @@ class Trainer:
     def train(self, local_rank):
         # build model
         self.model = build_local_model(self.config, self.device)
+        print(self.model)
                 # build optimizer
         self.optimizer = self.build_optimizer()
 
@@ -254,6 +255,7 @@ class Trainer:
                 if self.config.training.augmentation.mosaic:
                     logger.info("--->No mosaic aug now!")
                     self.train_loader.batch_sampler.set_mosaic(False)
+                    self.eval_interval_iters = self.config.training.iters_per_epoch
                 self.save_ckpt(ckpt_name="last_mosaic_epoch", local_rank = local_rank)
             # log needed information
             if (cur_iter + 1) % self.config.miscs.print_interval_iters == 0:
@@ -343,7 +345,7 @@ class Trainer:
         output_folders = [None] * len(self.config.dataset.val_ann)
         if self.config.miscs.output_dir:
             for idx, dataset_name in enumerate(self.config.dataset.val_ann):
-                output_folder = os.path.join(self.config.miscs.output_dir, "inference", dataset_name)
+                output_folder = os.path.join(self.config.miscs.output_dir, self.config.exp_name, "inference", dataset_name)
                 if local_rank == 0:
                     mkdir(output_folder)
                 output_folders[idx] = output_folder

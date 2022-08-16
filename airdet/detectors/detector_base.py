@@ -23,8 +23,6 @@ class Detector(nn.Module):
         self.head = build_head(config.model.head)
 
         self.config = config
-        self.conf_thre = self.config.testing.conf_threshold
-        self.nms_thre = self.config.testing.nms_iou_threshold
 
     def init_bn(self, M):
 
@@ -60,44 +58,26 @@ class Detector(nn.Module):
         print(f'load params from {pretrain_model}')
 
 
-    def forward(self, x, targets=None, distill=False, tea=False, stu=False, label_assign=None):
+    def forward(self, x, distill=False, tea=False, stu=False):
         images = to_image_list(x)
         feature_outs = self.backbone(images.tensors)  # list of tensor
         fpn_outs = self.neck(feature_outs)
         
         if distill:
             if tea:
-                label_assign = self.head(
-                                xin=fpn_outs,
-                                labels=targets,
-                                imgs=images,
-                                tea=True
-                                )
-                return fpn_outs, label_assign
+                return fpn_outs
             elif stu:
-                loss_dict = self.head(
-                                xin=fpn_outs,
-                                labels=targets,
-                                imgs=images,
-                                label_assign=label_assign,
-                                )
-                return loss_dict, fpn_outs,
-        else:
-            if self.training:
-                loss_dict = self.head(
-                                xin=fpn_outs,
-                                labels=targets,
-                                imgs=images,
-                                )
-                return loss_dict
-            else:
                 outputs = self.head(
-                fpn_outs, 
-                imgs=images, 
-                conf_thre=self.conf_thre, 
-                nms_thre=self.nms_thre
+                fpn_outs,
+                imgs=images,
                 )
-                return outputs
+                return outputs, fpn_outs
+        else:
+            outputs = self.head(
+			fpn_outs,
+			imgs=images,
+			)
+            return outputs
 
 
 def build_local_model(config, device):
