@@ -24,5 +24,6 @@ class Config(MyConfig):
         self.model.head.feat_channels = [128, 128, 128]
         self.model.head.in_channels = [192, 256, 512]
         self.model.head.conv_groups = 2
+        self.training.resume_path = "./epoch_280_ckpt.pth"
 
 

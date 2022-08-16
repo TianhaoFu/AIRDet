@@ -323,7 +323,8 @@ class Trainer:
         ckpt = torch.load(ckpt_file_path, map_location=self.device)
         self.model.load_state_dict(ckpt["model"])
         self.optimizer.load_state_dict(ckpt["optimizer"])
-        self.epoch = ckpt["start_epoch"]
+#        self.epoch = ckpt["start_epoch"]
+        self.epoch = 280
         self.config.training.start_epoch = self.epoch
 
 

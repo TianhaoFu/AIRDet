@@ -1,0 +1,9 @@
+# python -m torch.distributed.launch --nproc_per_node=8 tools/distiller.py --tea_config configs/airdet_m.py --stu_config configs/airdet_s.py --tea_ckpt airdet_m.pth --d mimic --loss_weight 0.5
+# python -m torch.distributed.launch --nproc_per_node=8 tools/train.py -f configs/airdet_s.py
+# python -m torch.distributed.launch --nproc_per_node=8 tools/distiller.py --tea_config configs/airdet_s.py --stu_config configs/distill_align_mosaic.py --tea_ckpt airdet_s_438_ckpt.pth --d mimic --loss_weight 20
+# python -m torch.distributed.launch --nproc_per_node=8 tools/distiller.py --tea_config configs/airdet_s.py --stu_config configs/distill_mgd_15_grad.py --tea_ckpt airdet_s_438_ckpt.pth --d mgd --loss_weight 15
+# python -m torch.distributed.launch --nproc_per_node=8 tools/distiller.py --tea_config configs/airdet_m.py --stu_config configs/airdet_s.py --tea_ckpt airdet_m.pth --d cwd --loss_weight 20
+# python -m torch.distributed.launch --nproc_per_node=8 tools/distiller.py --tea_config configs/airdet_m.py --stu_config configs/distill_cwd_40.py --tea_ckpt airdet_m.pth --d cwd --loss_weight 40
+# python -m torch.distributed.launch --nproc_per_node=8 tools/eval.py -f configs/airdet_m.py --ckpt airdet_m.pth
+python -m torch.distributed.launch --nproc_per_node=8 tools/distiller.py --tea_config configs/airdet_m.py --stu_config configs/airdet_s_m.py --tea_ckpt airdet_m.pth --d cwd --loss_weight 20
+# python -m torch.distributed.launch --nproc_per_node=8 tools/train.py -f configs/airdet_m.py

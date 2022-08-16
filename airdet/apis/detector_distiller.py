@@ -51,6 +51,8 @@ class Distiller:
         self.args = args
         self.lr = stu_config.training.base_lr_per_img * stu_config.training.images_per_batch
 
+        self.distill = FeatureLoss(self.args.distiller, self.config.model.neck.out_fpn_channels,\
+            self.tea_config.model.neck.out_fpn_channels, self.args.loss_weight)
         # metric record
         self.meter = MeterBuffer(window_size=stu_config.miscs.print_interval_iters)
         self.file_name = os.path.join(stu_config.miscs.output_dir,
@@ -58,6 +60,7 @@ class Distiller:
 
         self.device = "cuda"
 
+        self.grad_clip = None
         # setup logger
         if get_rank() == 0:
             os.makedirs(self.file_name, exist_ok=True)
@@ -84,6 +87,20 @@ class Distiller:
         self.no_aug = self.start_iter >= self.total_iters - self.no_aug_iters
 
 
+    def clip_gradient(self, optimizer, grad_clip):
+        """
+        Clips gradients computed during backpropagation to avoid explosion of gradients.
+
+        :param optimizer: optimizer with the gradients to be clipped
+        :param grad_clip: clip value
+        """
+        for group in optimizer.param_groups:
+            for param in group["params"]:
+                if param.grad is not None:
+                    # print(param.grad.data)
+                    param.grad.data.clamp_(-grad_clip, grad_clip)
+
+
     def build_optimizer(self):
         if "optimizer" not in self.__dict__:
             if self.config.training.warmup_epochs > 0:
@@ -100,6 +117,28 @@ class Distiller:
                     pg0.append(v.weight)
                 elif hasattr(v, "weight") and isinstance(v.weight, nn.Parameter):
                     pg1.append(v.weight)
+
+            for conv in self.distill.feature_loss.align_module:
+                for k, v in conv.named_modules():
+                    if hasattr(v, "bias") and isinstance(v.bias, nn.Parameter):
+                        pg2.append(v.bias)
+                    if isinstance(v, nn.BatchNorm2d) or "bn" in k:
+                        pg0.append(v.weight)
+                    elif hasattr(v, "weight") and isinstance(v.weight, nn.Parameter):
+                        # print('align')
+                        pg1.append(v.weight)
+
+            # for mgd
+            if self.args.distiller == "mgd":
+                for conv in self.distill.feature_loss.generation:
+                    for k, v in conv.named_modules():
+                        if hasattr(v, "bias") and isinstance(v.bias, nn.Parameter):
+                            pg2.append(v.bias)
+                        if isinstance(v, nn.BatchNorm2d) or "bn" in k:
+                            pg0.append(v.weight)
+                        elif hasattr(v, "weight") and isinstance(v.weight, nn.Parameter):
+                            # print('gen')
+                            pg1.append(v.weight)
 
             optimizer = torch.optim.SGD(
                 pg0, lr=lr, momentum=self.config.training.momentum, nesterov=True
@@ -160,7 +199,6 @@ class Distiller:
     def train(self, local_rank):
         # build student model
         self.model = build_local_model(self.config, self.device)
-        self.optimizer = self.build_optimizer()
 
         # build teacher model
         self.tea_model = build_local_model(self.tea_config, self.device)
@@ -172,7 +210,10 @@ class Distiller:
         logger.info("Loading teacher model...")
 
         # build distiller
-        distill = FeatureLoss(self.args.distiller, self.config.model.neck.out_fpn_channels, self.tea_config.model.neck.out_fpn_channels, self.args.loss_weight).to(self.device)
+        distill = self.distill.to(self.device)
+
+        # build optimizer
+        self.optimizer = self.build_optimizer()
 
         # resume model
         if self.config.training.resume_path is not None:
@@ -210,6 +251,8 @@ class Distiller:
         if local_rank == 0:
             self.tblogger = SummaryWriter(self.file_name)
 
+        self.grad_clip = 35
+
         logger.info("Student Training Start...")
 
         # ----------- start training ------------------------- #
@@ -226,8 +269,8 @@ class Distiller:
             data_end_time = time.time()
 
             with torch.no_grad():
-                fpn_outs_tea = self.tea_model(inps, distill=True, tea=True)
-            outputs, fpn_outs_stu = self.model(inps, targets, distill=True, stu=True)
+                fpn_outs_tea, label_assign = self.tea_model(inps, targets, distill=True, tea=True)
+            outputs, fpn_outs_stu = self.model(inps, targets, distill=True, stu=True, label_assign=label_assign)
 
             # 192 256 512
             distillion_loss = distill(fpn_outs_stu, fpn_outs_tea)
@@ -238,6 +281,8 @@ class Distiller:
 
             self.optimizer.zero_grad()
             loss.backward()
+            if self.grad_clip is not None:
+                self.clip_gradient(self.optimizer, self.grad_clip) # for stable training
             self.optimizer.step()
 
             if self.config.training.ema:

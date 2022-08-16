@@ -231,7 +231,7 @@ class GFocalHead_Tiny(nn.Module):
             normal_init(self.gfl_cls[i], std=0.01, bias=bias_cls)
             normal_init(self.gfl_reg[i], std=0.01)
 
-    def forward(self, xin, labels=None, imgs=None, conf_thre=0.05, nms_thre=0.7):
+    def forward(self, xin, labels=None, imgs=None, label_assign=None, tea=False, conf_thre=0.05, nms_thre=0.7):
 
         # prepare labels during training
         b, c, h, w = xin[0].shape
@@ -268,13 +268,15 @@ class GFocalHead_Tiny(nn.Module):
         flatten_bbox_preds = torch.cat(bbox_preds, dim=1)
 
         # calculating losses or bboxes decoded
-        if self.training:
+        if self.training or tea:
             loss = self.loss(
                 flatten_cls_scores,
                 flatten_bbox_preds,
                 gt_bbox_list,
                 gt_cls_list,
-                mlvl_priors)
+                mlvl_priors,
+                label_assign=label_assign,
+                tea=tea)
             return loss
         else:
             output = self.get_bboxes(
@@ -342,7 +344,9 @@ class GFocalHead_Tiny(nn.Module):
              gt_bboxes,
              gt_labels,
              mlvl_center_priors,
-             gt_bboxes_ignore=None):
+             gt_bboxes_ignore=None,
+             label_assign=None,
+             tea=False):
         """Compute losses of the head.
 
         """
@@ -351,17 +355,23 @@ class GFocalHead_Tiny(nn.Module):
         # get decoded bboxes for label assignment
         dis_preds = self.integral(bbox_preds) * mlvl_center_priors[..., 2, None]
         decoded_bboxes = distance2bbox(mlvl_center_priors[..., :2], dis_preds)
-        cls_reg_targets = self.get_targets(cls_scores,
+        if label_assign is None:
+            cls_reg_targets = self.get_targets(cls_scores,
                                            decoded_bboxes,
                                            gt_bboxes,
                                            mlvl_center_priors,
                                            gt_labels_list=gt_labels)
+        else:
+            cls_reg_targets = label_assign
+
         if cls_reg_targets is None:
             return None
-
+        
         (labels_list, label_scores_list, label_weights_list, bbox_targets_list,
          bbox_weights_list, dfl_targets_list, num_pos) = cls_reg_targets
-
+        if tea:
+            return cls_reg_targets
+        
         num_total_pos = max(
             reduce_mean(torch.tensor(num_pos).type(torch.float).to(device)).item(), 1.0)
 
@@ -494,8 +504,9 @@ class GFocalHead_Tiny(nn.Module):
             bbox_targets[pos_inds, :] = pos_bbox_targets
             bbox_weights[pos_inds, :] = 1.0
             dfl_targets[pos_inds, :] = (
-                bbox2distance(center_priors[pos_inds, :2], pos_bbox_targets, self.reg_max)
-                / center_priors[pos_inds, None, 2]
+                bbox2distance(center_priors[pos_inds, :2]/ center_priors[pos_inds, None, 2], 
+                              pos_bbox_targets/ center_priors[pos_inds, None, 2], 
+                              self.reg_max)
             )
         if len(neg_inds) > 0:
             label_weights[neg_inds] = 1.0

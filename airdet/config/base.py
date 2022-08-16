@@ -23,7 +23,7 @@ miscs = easydict({
          "print_interval_iters": 50,
          "output_dir": './workdirs',
          "seed": 1234,
-         "eval_interval_epochs": 5,
+         "eval_interval_epochs": 2,
          "ckpt_interval_epochs": 5,
         })
 

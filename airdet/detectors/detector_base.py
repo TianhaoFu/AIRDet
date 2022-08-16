@@ -38,8 +38,8 @@ class Detector(nn.Module):
         self.apply(self.init_bn)
 
         if self.config.training.pretrain_model is None:
-            # self.backbone.init_weights(pretrain = "csp_darknet.pth.tar")
-            self.backbone.init_weights()
+            self.backbone.init_weights(pretrain = "csp_darknet.pth.tar")
+            # self.backbone.init_weights()
             self.neck.init_weights()
             self.head.init_weights()
         else:
@@ -60,21 +60,28 @@ class Detector(nn.Module):
         print(f'load params from {pretrain_model}')
 
 
-    def forward(self, x, targets=None, distill=False, tea=False, stu=False):
+    def forward(self, x, targets=None, distill=False, tea=False, stu=False, label_assign=None):
         images = to_image_list(x)
         feature_outs = self.backbone(images.tensors)  # list of tensor
         fpn_outs = self.neck(feature_outs)
-
+        
         if distill:
             if tea:
-                return fpn_outs
+                label_assign = self.head(
+                                xin=fpn_outs,
+                                labels=targets,
+                                imgs=images,
+                                tea=True
+                                )
+                return fpn_outs, label_assign
             elif stu:
                 loss_dict = self.head(
                                 xin=fpn_outs,
                                 labels=targets,
                                 imgs=images,
+                                label_assign=label_assign,
                                 )
-                return loss_dict, fpn_outs
+                return loss_dict, fpn_outs,
         else:
             if self.training:
                 loss_dict = self.head(
