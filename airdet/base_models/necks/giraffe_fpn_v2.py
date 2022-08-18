@@ -16,10 +16,12 @@ class GiraffeNeckV2(nn.Module):
         width=1.0,
         in_features=[2, 3, 4],
         in_channels=[256, 512, 1024],
+        out_channels=[256, 512, 1024],
         depthwise=False,
         act="silu",
         spp=True,
         reparam_mode=True,
+        block_name='BasicBlock',
     ):
         super().__init__()
         self.in_features = in_features
@@ -35,7 +37,7 @@ class GiraffeNeckV2(nn.Module):
             int(in_channels[1] * width), int(in_channels[1] * width), 3, 2, act=act)
         if reparam_mode:
             self.merge_3 = CSPStage(
-                'BasicBlock',
+                block_name,
                 int((in_channels[1] + in_channels[2]) * width),
                 int(in_channels[2] * width),
                 round(3 * depth),
@@ -55,7 +57,7 @@ class GiraffeNeckV2(nn.Module):
             int(in_channels[0] * width), int(in_channels[0] * width), 3, 2, act=act)
         if reparam_mode:
             self.merge_4 = CSPStage(
-                'BasicBlock',
+                block_name,
                 int((in_channels[0] + in_channels[1] + in_channels[2]) * width),
                 int(in_channels[1] * width),
                 round(3 * depth),
@@ -74,16 +76,16 @@ class GiraffeNeckV2(nn.Module):
         # node x5: input x2, x4
         if reparam_mode:
             self.merge_5 = CSPStage(
-                'BasicBlock',
+                block_name,
                 int((in_channels[1] + in_channels[0]) * width),
-                int(in_channels[0] * width),
+                int(out_channels[0] * width),
                 round(3 * depth),
                 act = act,
                 spp = spp)
         else:
             self.merge_5 = CSPLayer(
                 int((in_channels[1] + in_channels[0]) * width),
-                int(in_channels[0] * width),
+                int(out_channels[0] * width),
                 round(3 * depth),
                 False,
                 depthwise=depthwise,
@@ -101,21 +103,19 @@ class GiraffeNeckV2(nn.Module):
 
         # node x7: input x4, x5
         self.bu_conv57 = Conv(
-            int(in_channels[0] * width), int(in_channels[0] * width), 3, 2, act=act)
-        self.bu_conv87 = Conv(
-            int(in_channels[0] * width), int(in_channels[0] * width), 3, 2, act=act)
+            int(out_channels[0] * width), int(out_channels[0] * width), 3, 2, act=act)
         if reparam_mode:
             self.merge_7 = CSPStage(
-               'BasicBlock',
-               int((in_channels[0] + in_channels[1]) * width),
-               int(in_channels[1] * width),
+               block_name,
+               int((out_channels[0] + in_channels[1]) * width),
+               int(out_channels[1] * width),
                round(3 * depth),
                act = act,
                spp = spp)
         else:
             self.merge_7 = CSPLayer(
-               int((in_channels[0] + in_channels[1]) * width),
-               int(in_channels[1] * width),
+               int((out_channels[0] + in_channels[1]) * width),
+               int(out_channels[1] * width),
                round(3 * depth),
                False,
                depthwise=depthwise,
@@ -126,19 +126,19 @@ class GiraffeNeckV2(nn.Module):
         self.bu_conv46 = Conv(
             int(in_channels[1] * width), int(in_channels[1] * width), 3, 2, act=act)
         self.bu_conv76 = Conv(
-            int(in_channels[1] * width), int(in_channels[1] * width), 3, 2, act=act)
+            int(out_channels[1] * width), int(out_channels[1] * width), 3, 2, act=act)
         if reparam_mode:
             self.merge_6 = CSPStage(
-               'BasicBlock',
-               int((in_channels[1]*2 + in_channels[2]) * width),
-               int(in_channels[2] * width),
+               block_name,
+               int((in_channels[1] + out_channels[1] + in_channels[2]) * width),
+               int(out_channels[2] * width),
                round(3 * depth),
                act = act,
                spp = spp)
         else:
             self.merge_6 = CSPLayer(
-               int((in_channels[1]*2 + in_channels[2]) * width),
-               int(in_channels[2] * width),
+               int((in_channels[1] + out_channels[1] + in_channels[2]) * width),
+               int(out_channels[2] * width),
                round(3 * depth),
                False,
                depthwise=depthwise,

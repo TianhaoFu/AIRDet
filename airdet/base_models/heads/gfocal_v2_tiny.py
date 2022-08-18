@@ -166,6 +166,7 @@ class GFocalHead_Tiny(nn.Module):
                         act=self.act,
                         reparam=self.reparam))
 
+        # conf_vector = [nn.Conv2d(4 * self.total_dim, 1, 1), nn.Sigmoid()]
         conf_vector = [nn.Conv2d(4 * self.total_dim, self.reg_channels, 1)]
         conf_vector += [nn.ReLU(inplace=True)]
         conf_vector += [nn.Conv2d(self.reg_channels, 1, 1), nn.Sigmoid()]
@@ -537,8 +538,9 @@ class GFocalHead_Tiny(nn.Module):
             bbox_targets[pos_inds, :] = pos_bbox_targets
             bbox_weights[pos_inds, :] = 1.0
             dfl_targets[pos_inds, :] = (
-                bbox2distance(center_priors[pos_inds, :2], pos_bbox_targets, self.reg_max)
-                / center_priors[pos_inds, None, 2]
+                bbox2distance(center_priors[pos_inds, :2] / center_priors[pos_inds, None, 2],
+                              pos_bbox_targets / center_priors[pos_inds, None, 2],
+                              self.reg_max)
             )
         if len(neg_inds) > 0:
             label_weights[neg_inds] = 1.0
