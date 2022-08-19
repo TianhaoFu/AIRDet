@@ -15,6 +15,7 @@ from airdet.utils.model_utils import replace_module, get_model_info
 from airdet.config.base import parse_config
 from airdet.detectors.detector_base import Detector, build_local_model
 from airdet.base_models.core.neck_ops import RepVGGBlock
+from airdet.base_models.core.regvgg_block import RepVGGBlock as RepVGGBlock_backbone
 
 def make_parser():
     parser = argparse.ArgumentParser("AIRDet converter deployment toolbox")
@@ -130,7 +131,7 @@ def main():
     model = replace_module(model, nn.SiLU, SiLU)
 
     for layer in model.modules():
-        if isinstance(layer, RepVGGBlock):
+        if isinstance(layer, RepVGGBlock) or isinstance(layer, RepVGGBlock_backbone):
             layer.switch_to_deploy()
 
     # decouple postprocess

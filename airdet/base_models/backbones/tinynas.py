@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 
 from ..core.base_ops import SPPBottleneck, Focus, get_activation
+from ..core.repvgg_block import RepVggBlock
 
 class ConvKXBN(nn.Module):
     def __init__(self, in_c, out_c, kernel_size, stride):
@@ -31,7 +32,8 @@ class ResConvK1KX(nn.Module):
     def __init__(self, in_c, out_c, btn_c, kernel_size, stride, force_resproj = False, act = "silu"):
         super(ResConvK1KX, self).__init__()
         self.conv1 = ConvKXBN(in_c, btn_c, 1, 1)
-        self.conv2 = ConvKXBN(btn_c, out_c, kernel_size, stride)
+        #self.conv2 = ConvKXBN(btn_c, out_c, kernel_size, stride)
+        self.conv2 = RepVggBlock(btn_c, out_c, kernel_size, stride, act='identity')
 
         if act is None:
             self.activation_function = torch.relu
@@ -82,8 +84,76 @@ class SuperResConvK1KX(nn.Module):
                 out_channels = out_c
                 this_stride = 1
                 force_resproj = False
-                this_kernel_size = 3
+                this_kernel_size = kernel_size
             the_block = ResConvK1KX(in_channels, out_channels, btn_c, this_kernel_size, this_stride, force_resproj, act=act)
+            self.block_list.append(the_block)
+            if block_id == 0 and with_spp:
+                self.block_list.append(SPPBottleneck(out_channels, out_channels))
+
+    def forward(self, x):
+        output = x
+        for block in self.block_list:
+            output = block(output)
+        return output
+
+class ResConvKXKX(nn.Module):
+    def __init__(self, in_c, out_c, btn_c, kernel_size, stride, force_resproj = False, act = "silu"):
+        super(ResConvKXKX, self).__init__()
+        self.conv1 = ConvKXBN(in_c, btn_c, kernel_size, 1)
+        #self.conv2 = ConvKXBN(btn_c, out_c, kernel_size, stride)
+        self.conv2 = RepVggBlock(btn_c, out_c, kernel_size, stride, act='identity')
+
+        if act is None:
+            self.activation_function = torch.relu
+        else:
+            self.activation_function = get_activation(act)
+
+        if stride == 2:
+            self.residual_downsample = nn.AvgPool2d(kernel_size=2, stride=2)
+        else:
+            self.residual_downsample = nn.Identity()
+
+        if in_c != out_c or force_resproj:
+            self.residual_proj = ConvKXBN(in_c, out_c, 1, 1)
+        else:
+            self.residual_proj = nn.Identity()
+
+    def forward(self, x):
+        reslink = self.residual_downsample(x)
+        reslink = self.residual_proj(reslink)
+
+        output = x
+        output = self.conv1(output)
+        output = self.activation_function(output)
+        output = self.conv2(output)
+
+        output = output + reslink
+        output = self.activation_function(output)
+
+        return output
+
+class SuperResConvKXKX(nn.Module):
+    def __init__(self, in_c, out_c, btn_c, kernel_size, stride, num_blocks, with_spp = False, act = "silu"):
+        super(SuperResConvKXKX, self).__init__()
+        if act is None:
+            self.act = torch.relu
+        else:
+            self.act = get_activation(act)
+        self.block_list = nn.ModuleList()
+        for block_id in range(num_blocks):
+            if block_id == 0:
+                in_channels = in_c
+                out_channels = out_c
+                this_stride = stride
+                force_resproj = False # as a part of CSPLayer, DO NOT need this flag
+                this_kernel_size = kernel_size
+            else:
+                in_channels = out_c
+                out_channels = out_c
+                this_stride = 1
+                force_resproj = False
+                this_kernel_size = kernel_size
+            the_block = ResConvKXKX(in_channels, out_channels, btn_c, this_kernel_size, this_stride, force_resproj, act=act)
             self.block_list.append(the_block)
             if block_id == 0 and with_spp:
                 self.block_list.append(SPPBottleneck(out_channels, out_channels))
@@ -118,6 +188,12 @@ class TinyNAS(nn.Module):
             elif the_block_class == 'SuperResConvK1KX':
                 spp = with_spp if idx == len(structure_info) - 1 else False
                 the_block = SuperResConvK1KX(block_info['in'], block_info['out'], block_info['btn'],
+                                                   block_info['k'], block_info['s'], block_info['L'], spp,
+                                                   act=act)
+                self.block_list.append(the_block)
+            elif the_block_class == 'SuperResConvKXKX':
+                spp = with_spp if idx == len(structure_info) - 1 else False
+                the_block = SuperResConvKXKX(block_info['in'], block_info['out'], block_info['btn'],
                                                    block_info['k'], block_info['s'], block_info['L'], spp,
                                                    act=act)
                 self.block_list.append(the_block)

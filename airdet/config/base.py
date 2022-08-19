@@ -179,6 +179,15 @@ class Config(metaclass=ABCMeta):
                 setattr(self, k, v)
 
 
+    def read_structure(self, path):
+
+        with open(path, 'r') as f:
+            structure = f.read()
+
+        return structure
+
+
+
 def get_config_by_file(config_file):
     try:
         sys.path.append(os.path.dirname(config_file))
