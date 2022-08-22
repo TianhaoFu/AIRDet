@@ -300,14 +300,14 @@ class CSPStage(nn.Module):
                 )
             next_ch_in = ch_mid
         # self.convs = nn.Sequential(*convs)
-        self.conv3 = ConvBNLayer(ch_mid * 2, ch_out, 1, act=act)
+        self.conv3 = ConvBNLayer(ch_mid * 3, ch_out, 1, act=act)
 
     def forward(self, x):
         y1 = self.conv1(x)
         y2 = self.conv2(x)
-        y2 = self.convs(y2)
-        y = torch.cat([y1, y2], axis=1)
+        y2_1 = self.convs[0](y2)
+        y2_2 = self.convs[1](y2_1)
+        y = torch.cat([y1, y2_1, y2_2], axis=1)
         y = self.conv3(y)
         return y
-
 
