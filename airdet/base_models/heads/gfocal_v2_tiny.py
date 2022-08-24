@@ -166,8 +166,9 @@ class GFocalHead_Tiny(nn.Module):
                         act=self.act,
                         reparam=self.reparam))
 
-        # conf_vector = [nn.Conv2d(4 * self.total_dim, 1, 1), nn.Sigmoid()]
-        conf_vector = [nn.Conv2d(4 * self.total_dim, self.reg_channels, 1)]
+        #conf_vector = [nn.Conv2d(4 * (self.reg_max+1), self.reg_channels, 1)]
+        #conf_vector = [nn.Conv2d(4 * self.total_dim, self.reg_channels, 1)]
+        conf_vector = [nn.Conv2d(4 * (self.reg_max+1), self.reg_channels, 1)]
         conf_vector += [nn.ReLU(inplace=True)]
         conf_vector += [nn.Conv2d(self.reg_channels, 1, 1), nn.Sigmoid()]
         reg_conf = nn.Sequential(*conf_vector)
@@ -281,7 +282,8 @@ class GFocalHead_Tiny(nn.Module):
     def forward_eval(self, xin, labels=None, imgs=None):
 
         # prepare priors for label assignment and bbox decode
-        if self.feat_size[0][2:4] != xin[0].shape[2:4]:
+        if True:
+#        if self.feat_size[0] != xin[0].shape:
             mlvl_priors_list = [
                 self.get_single_level_center_priors(
                     xin[i].shape[0],
@@ -340,15 +342,16 @@ class GFocalHead_Tiny(nn.Module):
             bbox_before_softmax = bbox_pred.reshape(N, 4, self.reg_max+1, H, W)
             bbox_before_softmax = bbox_before_softmax.flatten(start_dim=3).permute(0,3,1,2)
         bbox_pred = F.softmax(bbox_pred.reshape(N, 4, self.reg_max+1, H, W), dim=2)
-        prob_topk, _ = bbox_pred.topk(self.reg_topk, dim=2)
+#        prob_topk, _ = bbox_pred.topk(self.reg_topk, dim=2)
+#
+#        if self.add_mean:
+#            stat = torch.cat([prob_topk, prob_topk.mean(dim=2, keepdim=True)],
+#                             dim=2)
+#        else:
+#            stat = prob_topk
 
-        if self.add_mean:
-            stat = torch.cat([prob_topk, prob_topk.mean(dim=2, keepdim=True)],
-                             dim=2)
-        else:
-            stat = prob_topk
-
-        quality_score = reg_conf(stat.reshape(N, 4*self.total_dim, H, W))
+        quality_score = reg_conf(bbox_pred.reshape(N, 4*(self.reg_max+1), H, W))
+ #       quality_score = reg_conf(stat.reshape(N, 4*self.total_dim, H, W))
         cls_score = gfl_cls(cls_feat).sigmoid() * quality_score
 
         cls_score = cls_score.flatten(start_dim=2).permute(0,2,1) # N, h*w, self.num_classes+1
