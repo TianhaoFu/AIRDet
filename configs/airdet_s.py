@@ -8,5 +8,6 @@ class Config(MyConfig):
     def __init__(self):
         super(Config, self).__init__()
 
-        self.exp_name = os.path.split(os.path.realpath(__file__))[1].split(".")[0]
+        # self.exp_name = os.path.split(os.path.realpath(__file__))[1].split(".")[0]
+        self.exp_name = "from_scratch_cwd_20"
 

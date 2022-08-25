@@ -48,7 +48,6 @@ class Trainer:
         self.config = config
         self.args = args
 
-
         self.lr = config.training.base_lr_per_img * config.training.images_per_batch
 
         # metric record
@@ -160,8 +159,8 @@ class Trainer:
     def train(self, local_rank):
         # build model
         self.model = build_local_model(self.config, self.device)
-        print(self.model)
-                # build optimizer
+
+        # build optimizer
         self.optimizer = self.build_optimizer()
 
         # resume model
@@ -325,8 +324,7 @@ class Trainer:
         ckpt = torch.load(ckpt_file_path, map_location=self.device)
         self.model.load_state_dict(ckpt["model"])
         self.optimizer.load_state_dict(ckpt["optimizer"])
-#        self.epoch = ckpt["start_epoch"]
-        self.epoch = 280
+        self.epoch = ckpt["start_epoch"]
         self.config.training.start_epoch = self.epoch
 
 

@@ -7,7 +7,7 @@ import sys
 import os
 import importlib
 
-from .backbones import CSPDarknet, MobileNet, ShuffleNet
+from .backbones import CSPDarknet
 from .necks import GiraffeNeck, PAFPNNeck
 from .heads import GFocalV2, yolo_head
 from .augmentations import tta, strong_autoaug
@@ -23,8 +23,8 @@ miscs = easydict({
          "print_interval_iters": 50,
          "output_dir": './workdirs',
          "seed": 1234,
-         "eval_interval_epochs": 2,
-         "ckpt_interval_epochs": 5,
+         "eval_interval_epochs": 10,
+         "ckpt_interval_epochs": 10,
         })
 
 deploy = easydict({
@@ -45,21 +45,9 @@ yolox_model = easydict({
          "head": yolo_head,
          })
 
-airdet_Mobile = easydict({
-         "backbone": MobileNet,
-         "neck": GiraffeNeck,
-         "head": GFocalV2,
-         })
-
-airdet_Shuffle = easydict({
-         "backbone": ShuffleNet,
-         "neck": GiraffeNeck,
-         "head": GFocalV2,
-         })
-
 training = easydict({
          "fp16": False,
-         "ema": False,
+         "ema": True,
          "ema_momentum": 0.9998,
          "use_syncBN": True,
          # optimizer
@@ -71,7 +59,7 @@ training = easydict({
          "lr_scheduler": 'cosine',
          "min_lr_ratio": 0.05,
 
-         "images_per_batch": 32,
+         "images_per_batch": 64,
          "start_epochs": 0,
          "total_epochs": 300,
          "warmup_epochs": 5,
@@ -93,7 +81,7 @@ testing = easydict({
             "multi_gpu": True,
             "input_min_size": (640,),
             "input_max_size": 640,
-            "images_per_batch": 32,
+            "images_per_batch": 128,
           })
 
 dataset = easydict({

@@ -269,13 +269,13 @@ class Distiller:
             data_end_time = time.time()
 
             with torch.no_grad():
-                fpn_outs_tea, label_assign = self.tea_model(inps, targets, distill=True, tea=True)
-            outputs, fpn_outs_stu = self.model(inps, targets, distill=True, stu=True, label_assign=label_assign)
+                fpn_outs_tea = self.tea_model(inps, targets, distill=True, tea=True)
+            outputs, fpn_outs_stu = self.model(inps, targets, distill=True, stu=True)
 
             # 192 256 512
             distillion_loss = distill(fpn_outs_stu, fpn_outs_tea)
-            outputs["distillion_loss"] = distillion_loss
-            outputs["total_loss"] = outputs["total_loss"] + outputs["distillion_loss"]
+            outputs["distill_loss"] = distillion_loss
+            outputs["total_loss"] = outputs["total_loss"] + outputs["distill_loss"]
 
             loss = outputs["total_loss"]
 
@@ -345,7 +345,7 @@ class Distiller:
                 self.meter.clear_meters()
 
             if (cur_iter + 1) % self.eval_interval_iters == 0:
-            # if True:
+            # if data_iter == 100:
                 self.evaluate(local_rank)
                 self.model.train()
             synchronize()
@@ -367,6 +367,9 @@ class Distiller:
                 "start_epoch": self.epoch + 1,
                 "model": save_model.state_dict(),
                 "optimizer": self.optimizer.state_dict(),
+                "align_module_0": self.distill.feature_loss.align_module[0].state_dict(),
+                "align_module_1": self.distill.feature_loss.align_module[1].state_dict(),
+                "align_module_2": self.distill.feature_loss.align_module[2].state_dict(),
             }
             save_checkpoint(
                 ckpt_state,
@@ -379,7 +382,7 @@ class Distiller:
     def resume_model(self, resume_path):
         ckpt_file_path = self.config.training.resume_path
         ckpt = torch.load(ckpt_file_path, map_location=self.device)
-        self.model.load_state_dict(ckpt["model"])
+        self.model.load_state_dict(ckpt["model"], strict=True)
         self.optimizer.load_state_dict(ckpt["optimizer"])
         self.epoch = ckpt["start_epoch"]
         self.config.training.start_epoch = self.epoch
@@ -400,7 +403,7 @@ class Distiller:
         output_folders = [None] * len(self.config.dataset.val_ann)
         if self.config.miscs.output_dir:
             for idx, dataset_name in enumerate(self.config.dataset.val_ann):
-                output_folder = os.path.join(self.config.miscs.output_dir, "inference", dataset_name)
+                output_folder = os.path.join(self.config.miscs.output_dir, self.config.exp_name, "inference", dataset_name)
                 if local_rank == 0:
                     mkdir(output_folder)
                 output_folders[idx] = output_folder

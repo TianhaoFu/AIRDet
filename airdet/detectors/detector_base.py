@@ -58,7 +58,7 @@ class Detector(nn.Module):
         print(f'load params from {pretrain_model}')
 
 
-    def forward(self, x, distill=False, tea=False, stu=False):
+    def forward(self, x, targets=None, distill=False, tea=False, stu=False):
         images = to_image_list(x)
         feature_outs = self.backbone(images.tensors)  # list of tensor
         fpn_outs = self.neck(feature_outs)
@@ -69,12 +69,14 @@ class Detector(nn.Module):
             elif stu:
                 outputs = self.head(
                 fpn_outs,
+                targets,
                 imgs=images,
                 )
                 return outputs, fpn_outs
         else:
             outputs = self.head(
 			fpn_outs,
+            targets,
 			imgs=images,
 			)
             return outputs
