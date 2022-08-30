@@ -28,6 +28,15 @@ def get_aug_params(value, center=0):
             )
         )
 
+
+def box_candidates(box1, box2, wh_thr=2, ar_thr=20, area_thr=0.1, eps=1e-16):  # box1(4,n), box2(4,n)
+    # Compute candidate boxes: box1 before augment, box2 after augment, wh_thr (pixels), aspect_ratio_thr, area_ratio
+    w1, h1 = box1[2] - box1[0], box1[3] - box1[1]
+    w2, h2 = box2[2] - box2[0], box2[3] - box2[1]
+    ar = np.maximum(w2 / (h2 + eps), h2 / (w2 + eps))  # aspect ratio
+    return (w2 > wh_thr) & (h2 > wh_thr) & (w2 * h2 / (w1 * h1 + eps) > area_thr) & (ar < ar_thr)  # candidates
+
+
 def apply_affine_to_bboxes(targets, target_size, M, scale):
     num_gts = len(targets)
 
@@ -55,9 +64,14 @@ def apply_affine_to_bboxes(targets, target_size, M, scale):
     new_bboxes[:, 0::2] = new_bboxes[:, 0::2].clip(0, twidth)
     new_bboxes[:, 1::2] = new_bboxes[:, 1::2].clip(0, theight)
 
-    targets[:, :4] = new_bboxes
+    i = box_candidates(box1 = targets[:, 0:4].T * scale, box2 = new_bboxes.T, area_thr = 0.1)
+    targets = targets[i]
+    targets[:, :4] = new_bboxes[i]
+
+    # targets[:, :4] = new_bboxes
 
     return targets
+
 
 def get_affine_matrix(
     target_size,
@@ -235,7 +249,7 @@ class MosaicDetection(torch.utils.data.dataset.Dataset):
                 target_size=(input_w, input_h),
                 degrees=self.degrees,
                 translate=self.translate,
-                scales=self.scale,
+                scales=0.9,
                 shear=self.shear,
             )
 
@@ -255,8 +269,8 @@ class MosaicDetection(torch.utils.data.dataset.Dataset):
             boxes = torch.as_tensor(boxes).reshape(-1, 4)
             areas = (boxes[:,3]-boxes[:,1]) * (boxes[:,2] - boxes[:, 0])
             valid_idx = areas > 4
-            target = BoxList(boxes[valid_idx], (w_tmp, h_tmp), mode="xyxy")
 
+            target = BoxList(boxes[valid_idx], (w_tmp, h_tmp), mode="xyxy")
 
             classes = [mosaic_label[4] for mosaic_label in mosaic_labels]
             classes = torch.tensor(classes)[valid_idx]
@@ -352,4 +366,35 @@ class MosaicDetection(torch.utils.data.dataset.Dataset):
 
     def get_img_info(self, index):
         return self._dataset.get_img_info(index)
+
+
+def debug_input_vis(dataset, img, target, id):
+    import cv2
+    import numpy as np
+
+    bboxs = target.bbox.cpu().numpy()
+    cls = target.get_field("labels").cpu().numpy()
+
+    img_id = dataset._dataset.id_to_img_map[id]
+
+    img = np.clip(img.copy().astype(np.uint8), 0, 255)
+    for bbox, obj_cls in zip(bboxs, cls):
+        x1, y1, x2, y2 = map(int, bbox)
+        cv2.rectangle(img, pt1=(x1,y1), pt2=(x2,y2), color=(0,0,255), thickness=2)
+        cv2.putText(img, f"{obj_cls}", (x1,y1), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0,0,255))
+
+    cv2.imwrite(f'./visimgs/vis_{img_id}.jpg', img)
+
+if __name__ == '__main__':
+        import pdb
+        pdb.set_trace()
+        coco_dataset = COCODataset(ann_file='datasets/coco/annotations/instances_val2017.json', root='datasets/coco/val2017', remove_images_without_annotations=True)
+        mosaic_dataset = MosaicDetection(dataset=coco_dataset, img_size=(640, 640))
+        # mosaic_dataset.close_mosaic()
+
+        for idx, tmp in enumerate(mosaic_dataset):
+            print (idx)
+            print (tmp)
+            debug_input_vis(mosaic_dataset, tmp[0], tmp[1], tmp[2])
+            break
 
