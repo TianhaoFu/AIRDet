@@ -37,7 +37,6 @@ def box_candidates(box1, box2, wh_thr=2, ar_thr=20, area_thr=0.1, eps=1e-16):  #
 
 
 def apply_affine_to_bboxes(targets, target_size, M, scale):
-
     num_gts = len(targets)
 
     # warp corner points
@@ -163,7 +162,7 @@ def random_affine_v6(
     scales=0.1,
     shear=10,
 ):
-    M, scale = get_transform_matrix_v6(img.shape[:2], target_size, degrees, translate, scales, shear)
+    M, scale = get_transform_matrix_v6(img.shape[:2], target_size, degrees, scales, shear, translate)
 
     if (M != np.eye(3)).any():  # image changed
         img = cv2.warpAffine(img, M[:2], dsize=target_size, borderValue=(114, 114, 114))
@@ -262,7 +261,7 @@ class MosaicDetection(torch.utils.data.dataset.Dataset):
             enable_mosaic = inp[0]
             idx = inp[1]
         else:
-            enable_mosaic = True
+            enable_mosaic = False
             idx = inp
         if enable_mosaic and random.random() < self.mosaic_prob:
             mosaic_labels = []
@@ -453,15 +452,13 @@ def debug_input_vis(dataset, img, target, id):
     cv2.imwrite(f'./visimgs/vis_{img_id}.jpg', img)
 
 if __name__ == '__main__':
-        import pdb
-        pdb.set_trace()
         coco_dataset = COCODataset(ann_file='datasets/coco/annotations/instances_val2017.json', root='datasets/coco/val2017', remove_images_without_annotations=True)
         mosaic_dataset = MosaicDetection(dataset=coco_dataset, img_size=(640, 640))
         # mosaic_dataset.close_mosaic()
 
         for idx, tmp in enumerate(mosaic_dataset):
-            print (idx)
-            print (tmp)
+            # print (idx)
+            # print (tmp)
             debug_input_vis(mosaic_dataset, tmp[0], tmp[1], tmp[2])
             if idx > 10:
                 break
