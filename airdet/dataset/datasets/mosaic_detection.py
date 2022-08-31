@@ -28,7 +28,6 @@ def get_aug_params(value, center=0):
             )
         )
 
-
 def box_candidates(box1, box2, wh_thr=2, ar_thr=20, area_thr=0.1, eps=1e-16):  # box1(4,n), box2(4,n)
     # Compute candidate boxes: box1 before augment, box2 after augment, wh_thr (pixels), aspect_ratio_thr, area_ratio
     w1, h1 = box1[2] - box1[0], box1[3] - box1[1]
@@ -38,6 +37,7 @@ def box_candidates(box1, box2, wh_thr=2, ar_thr=20, area_thr=0.1, eps=1e-16):  #
 
 
 def apply_affine_to_bboxes(targets, target_size, M, scale):
+
     num_gts = len(targets)
 
     # warp corner points
@@ -64,13 +64,29 @@ def apply_affine_to_bboxes(targets, target_size, M, scale):
     new_bboxes[:, 0::2] = new_bboxes[:, 0::2].clip(0, twidth)
     new_bboxes[:, 1::2] = new_bboxes[:, 1::2].clip(0, theight)
 
-    i = box_candidates(box1 = targets[:, 0:4].T * scale, box2 = new_bboxes.T, area_thr = 0.1)
-    targets = targets[i]
-    targets[:, :4] = new_bboxes[i]
-
-    # targets[:, :4] = new_bboxes
+    targets[:, :4] = new_bboxes
 
     return targets
+
+
+def random_affine(
+    img,
+    targets=(),
+    target_size=(640, 640),
+    degrees=10,
+    translate=0.1,
+    scales=0.1,
+    shear=10,
+):
+    M, scale = get_affine_matrix(target_size, degrees, translate, scales, shear)
+
+    img = cv2.warpAffine(img, M, dsize=target_size, borderValue=(0, 0, 0))
+
+    # Transform label coordinates
+    if len(targets) > 0:
+        targets = apply_affine_to_bboxes(targets, target_size, M, scale)
+
+    return img, targets
 
 
 def get_affine_matrix(
@@ -108,7 +124,37 @@ def get_affine_matrix(
 
     return M, scale
 
-def random_affine(
+def get_transform_matrix_v6(img_shape, new_shape, degrees, scale, shear, translate):
+    new_height, new_width = new_shape
+    # Center
+    C = np.eye(3)
+    C[0, 2] = -img_shape[1] / 2  # x translation (pixels)
+    C[1, 2] = -img_shape[0] / 2  # y translation (pixels)
+
+    # Rotation and Scale
+    R = np.eye(3)
+    a = random.uniform(-degrees, degrees)
+    # a += random.choice([-180, -90, 0, 90])  # add 90deg rotations to small rotations
+    s = random.uniform(1 - scale, 1 + scale)
+    # s = 2 ** random.uniform(-scale, scale)
+    R[:2] = cv2.getRotationMatrix2D(angle=a, center=(0, 0), scale=s)
+
+    # Shear
+    S = np.eye(3)
+    S[0, 1] = math.tan(random.uniform(-shear, shear) * math.pi / 180)  # x shear (deg)
+    S[1, 0] = math.tan(random.uniform(-shear, shear) * math.pi / 180)  # y shear (deg)
+
+    # Translation
+    T = np.eye(3)
+    T[0, 2] = random.uniform(0.5 - translate, 0.5 + translate) * new_width  # x translation (pixels)
+    T[1, 2] = random.uniform(0.5 - translate, 0.5 + translate) * new_height  # y transla ion (pixels)
+
+    # Combined rotation matrix
+    M = T @ S @ R @ C  # order of operations (right to left) is IMPORTANT
+    return M, s
+
+
+def random_affine_v6(
     img,
     targets=(),
     target_size=(640, 640),
@@ -117,13 +163,34 @@ def random_affine(
     scales=0.1,
     shear=10,
 ):
-    M, scale = get_affine_matrix(target_size, degrees, translate, scales, shear)
+    M, scale = get_transform_matrix_v6(img.shape[:2], target_size, degrees, translate, scales, shear)
 
-    img = cv2.warpAffine(img, M, dsize=target_size, borderValue=(0, 0, 0))
+    if (M != np.eye(3)).any():  # image changed
+        img = cv2.warpAffine(img, M[:2], dsize=target_size, borderValue=(114, 114, 114))
 
     # Transform label coordinates
-    if len(targets) > 0:
-        targets = apply_affine_to_bboxes(targets, target_size, M, scale)
+    n = len(targets)
+    if n:
+        new = np.zeros((n, 4))
+
+        xy = np.ones((n * 4, 3))
+        xy[:, :2] = targets[:, [0, 1, 2, 3, 0, 3, 2, 1]].reshape(n * 4, 2)  # x1y1, x2y2, x1y2, x2y1
+        xy = xy @ M.T  # transform
+        xy = xy[:, :2].reshape(n, 8)  # perspective rescale or affine
+
+        # create new boxes
+        x = xy[:, [0, 2, 4, 6]]
+        y = xy[:, [1, 3, 5, 7]]
+        new = np.concatenate((x.min(1), y.min(1), x.max(1), y.max(1))).reshape(4, n).T
+
+        # clip
+        new[:, [0, 2]] = new[:, [0, 2]].clip(0, target_size[0])
+        new[:, [1, 3]] = new[:, [1, 3]].clip(0, target_size[1])
+
+        # filter candidates
+        i = box_candidates(box1=targets[:, 0:4].T * scale, box2=new.T, area_thr=0.1)
+        targets = targets[i]
+        targets[:, 0:4] = new[i]
 
     return img, targets
 
@@ -195,7 +262,7 @@ class MosaicDetection(torch.utils.data.dataset.Dataset):
             enable_mosaic = inp[0]
             idx = inp[1]
         else:
-            enable_mosaic = False
+            enable_mosaic = True
             idx = inp
         if enable_mosaic and random.random() < self.mosaic_prob:
             mosaic_labels = []
@@ -243,14 +310,14 @@ class MosaicDetection(torch.utils.data.dataset.Dataset):
                 np.clip(mosaic_labels[:, 2], 0, 2 * input_w, out=mosaic_labels[:, 2])
                 np.clip(mosaic_labels[:, 3], 0, 2 * input_h, out=mosaic_labels[:, 3])
 
-            mosaic_img, mosaic_labels = random_affine(
+            mosaic_img, mosaic_labels = random_affine_v6(
                 mosaic_img,
                 mosaic_labels,
                 target_size=(input_w, input_h),
-                degrees=self.degrees,
-                translate=self.translate,
-                scales=0.9,
-                shear=self.shear,
+                degrees=0.0,
+                translate=0.1,
+                scales=0.5,
+                shear=0.0,
             )
 
             # -----------------------------------------------------------------
@@ -396,5 +463,6 @@ if __name__ == '__main__':
             print (idx)
             print (tmp)
             debug_input_vis(mosaic_dataset, tmp[0], tmp[1], tmp[2])
-            break
+            if idx > 10:
+                break
 
